@@ -59,6 +59,17 @@
                     <a class="nav-link {{ request()->routeIs('catalogo.productos.*') ? 'active' : '' }}" href="{{ route('catalogo.productos.index') }}">
                         <i class="bi bi-box-seam"></i> Productos
                     </a>
+                    <a class="nav-link {{ request()->routeIs('inventario.stock.*', 'inventario.kardex') ? 'active' : '' }}" href="{{ route('inventario.stock.index') }}">
+                        <i class="bi bi-clipboard-data"></i> Stock
+                    </a>
+                    <a class="nav-link {{ request()->routeIs('inventario.movimientos.*') ? 'active' : '' }}" href="{{ route('inventario.movimientos.index') }}">
+                        <i class="bi bi-arrow-left-right"></i> Movimientos
+                    </a>
+                    @if ($usuario->tieneRol('admin', 'encargado'))
+                        <a class="nav-link {{ request()->routeIs('inventario.depositos.*', 'inventario.ubicaciones.*') ? 'active' : '' }}" href="{{ route('inventario.depositos.index') }}">
+                            <i class="bi bi-buildings"></i> Depósitos
+                        </a>
+                    @endif
 
                     @if ($usuario->tieneRol('admin', 'encargado'))
                         <div class="seccion">Catálogo</div>
@@ -77,6 +88,9 @@
                         <div class="seccion">Configuración</div>
                         <a class="nav-link {{ request()->routeIs('configuracion.empresa.*') ? 'active' : '' }}" href="{{ route('configuracion.empresa.edit') }}">
                             <i class="bi bi-building-gear"></i> Empresa
+                        </a>
+                        <a class="nav-link {{ request()->routeIs('configuracion.motivos.*') ? 'active' : '' }}" href="{{ route('configuracion.motivos.index') }}">
+                            <i class="bi bi-list-check"></i> Motivos
                         </a>
                         <a class="nav-link {{ request()->routeIs('configuracion.usuarios.*') ? 'active' : '' }}" href="{{ route('configuracion.usuarios.index') }}">
                             <i class="bi bi-people"></i> Usuarios

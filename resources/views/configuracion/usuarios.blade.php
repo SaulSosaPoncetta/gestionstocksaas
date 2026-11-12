@@ -17,6 +17,7 @@
                     <th>Nombre</th>
                     <th>Email</th>
                     <th>Rol</th>
+                    <th>Depósitos</th>
                     <th>Estado</th>
                     <th>Último acceso</th>
                     <th class="text-end">Acciones</th>
@@ -33,6 +34,13 @@
                         </td>
                         <td>{{ $u->email }}</td>
                         <td><span class="badge text-bg-secondary">{{ $u->rol_nombre }}</span></td>
+                        <td class="small">
+                            @if ($u->operaTodosLosDepositos())
+                                <span class="text-muted">Todos</span>
+                            @else
+                                {{ $u->depositos->pluck('nombre')->implode(', ') ?: 'Ninguno' }}
+                            @endif
+                        </td>
                         <td>
                             @if ($u->activo)
                                 <span class="badge text-bg-success">Activo</span>
@@ -57,7 +65,7 @@
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="6" class="text-center text-muted py-4">No hay usuarios cargados.</td></tr>
+                    <tr><td colspan="7" class="text-center text-muted py-4">No hay usuarios cargados.</td></tr>
                 @endforelse
                 </tbody>
             </table>

@@ -75,6 +75,7 @@ class Producto extends Model
             'usa_lotes' => 'boolean',
             'usa_series' => 'boolean',
             'costo' => 'decimal:4',
+            'costo_promedio' => 'decimal:4',
             'margen' => 'decimal:2',
             'precio_venta' => 'decimal:4',
             'stock_minimo' => 'decimal:4',
@@ -138,6 +139,11 @@ class Producto extends Model
         return $this->hasMany(ProductoImagen::class)->orderBy('orden');
     }
 
+    public function existencias(): HasMany
+    {
+        return $this->hasMany(Existencia::class);
+    }
+
     public function imagenPrincipal(): HasOne
     {
         return $this->hasOne(ProductoImagen::class)->ofMany('orden', 'min');
@@ -171,6 +177,12 @@ class Producto extends Model
     public function getPorcentajeIvaAttribute(): float
     {
         return (float) ($this->alicuota?->porcentaje ?? 0);
+    }
+
+    /** Costo para valorizar el stock: el promedio ponderado, o el de reposición si todavía no hubo ingresos. */
+    public function getCostoValuacionAttribute(): float
+    {
+        return (float) $this->costo_promedio > 0 ? (float) $this->costo_promedio : (float) $this->costo;
     }
 
     public function getPrecioFinalAttribute(): float

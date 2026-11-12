@@ -8,8 +8,13 @@ use App\Http\Controllers\Catalogo\ProductoController;
 use App\Http\Controllers\Catalogo\UnidadMedidaController;
 use App\Http\Controllers\Configuracion\EmpresaController;
 use App\Http\Controllers\Configuracion\IntegracionController;
+use App\Http\Controllers\Configuracion\MotivoController;
 use App\Http\Controllers\Configuracion\UsuarioController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Inventario\DepositoController;
+use App\Http\Controllers\Inventario\MovimientoController;
+use App\Http\Controllers\Inventario\StockController;
+use App\Http\Controllers\Inventario\UbicacionController;
 use Illuminate\Support\Facades\Route;
 
 /* ---------- Invitados ---------- */
@@ -39,6 +44,50 @@ Route::middleware('auth')->group(function () {
         /* Productos: todos los roles consultan */
         Route::get('/catalogo/productos', [ProductoController::class, 'index'])->name('catalogo.productos.index');
         Route::get('/catalogo/productos/buscar', [ProductoController::class, 'buscar'])->name('catalogo.productos.buscar');
+        Route::get('/catalogo/productos/stock', [ProductoController::class, 'stock'])->name('catalogo.productos.stock');
+
+        /* Stock, kardex y movimientos */
+        Route::prefix('inventario')->name('inventario.')->group(function () {
+            $tiposManuales = array_keys(MovimientoController::TIPOS_MANUALES);
+
+            Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
+            Route::get('/kardex/{producto}', [StockController::class, 'kardex'])->name('kardex');
+
+            Route::get('/movimientos', [MovimientoController::class, 'index'])->name('movimientos.index');
+            Route::get('/movimientos/{movimiento}', [MovimientoController::class, 'show'])->whereNumber('movimiento')->name('movimientos.show');
+
+            // Cada tipo define qué roles lo pueden cargar (MovimientoController::TIPOS_MANUALES)
+            Route::middleware('rol:admin,encargado,operador')->group(function () use ($tiposManuales) {
+                Route::get('/movimientos/nuevo/{tipo}', [MovimientoController::class, 'create'])
+                    ->whereIn('tipo', $tiposManuales)->name('movimientos.create');
+                Route::post('/movimientos/nuevo/{tipo}', [MovimientoController::class, 'store'])
+                    ->whereIn('tipo', $tiposManuales)->name('movimientos.store');
+            });
+
+            Route::post('/movimientos/{movimiento}/anular', [MovimientoController::class, 'anular'])
+                ->middleware('rol:admin,encargado')->whereNumber('movimiento')->name('movimientos.anular');
+        });
+
+        /* Depósitos y ubicaciones */
+        Route::middleware('rol:admin,encargado')->prefix('inventario')->name('inventario.')->group(function () {
+
+            Route::get('/depositos', [DepositoController::class, 'index'])->name('depositos.index');
+
+            Route::middleware('rol:admin')->group(function () {
+                Route::get('/depositos/crear', [DepositoController::class, 'create'])->name('depositos.create');
+                Route::post('/depositos', [DepositoController::class, 'store'])->name('depositos.store');
+                Route::get('/depositos/{deposito}/editar', [DepositoController::class, 'edit'])->name('depositos.edit');
+                Route::put('/depositos/{deposito}', [DepositoController::class, 'update'])->name('depositos.update');
+                Route::delete('/depositos/{deposito}', [DepositoController::class, 'destroy'])->name('depositos.destroy');
+                Route::post('/depositos/{deposito}/principal', [DepositoController::class, 'principal'])->name('depositos.principal');
+            });
+
+            Route::get('/depositos/{deposito}/ubicaciones', [UbicacionController::class, 'index'])->name('ubicaciones.index');
+            Route::post('/depositos/{deposito}/ubicaciones', [UbicacionController::class, 'store'])->name('ubicaciones.store');
+            Route::post('/depositos/{deposito}/ubicaciones/generar', [UbicacionController::class, 'generar'])->name('ubicaciones.generar');
+            Route::put('/depositos/{deposito}/ubicaciones/{ubicacion}', [UbicacionController::class, 'update'])->name('ubicaciones.update');
+            Route::delete('/depositos/{deposito}/ubicaciones/{ubicacion}', [UbicacionController::class, 'destroy'])->name('ubicaciones.destroy');
+        });
 
         /* Catálogo base: administradores y encargados */
         Route::middleware('rol:admin,encargado')->prefix('catalogo')->name('catalogo.')->group(function () {
@@ -70,6 +119,11 @@ Route::middleware('auth')->group(function () {
 
             Route::get('/empresa', [EmpresaController::class, 'edit'])->name('empresa.edit');
             Route::put('/empresa', [EmpresaController::class, 'update'])->name('empresa.update');
+
+            Route::get('/motivos', [MotivoController::class, 'index'])->name('motivos.index');
+            Route::post('/motivos', [MotivoController::class, 'store'])->name('motivos.store');
+            Route::put('/motivos/{motivo}', [MotivoController::class, 'update'])->name('motivos.update');
+            Route::delete('/motivos/{motivo}', [MotivoController::class, 'destroy'])->name('motivos.destroy');
 
             Route::get('/usuarios', [UsuarioController::class, 'index'])->name('usuarios.index');
             Route::get('/usuarios/crear', [UsuarioController::class, 'create'])->name('usuarios.create');

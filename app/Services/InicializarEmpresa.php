@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Categoria;
+use App\Models\Deposito;
+use App\Models\Motivo;
 use App\Models\Empresa;
 use App\Models\UnidadMedida;
 use App\Support\EmpresaActual;
@@ -24,6 +26,20 @@ class InicializarEmpresa
 
                 if (! Categoria::query()->exists()) {
                     Categoria::create(['nombre' => 'General', 'activa' => true]);
+                }
+
+                if (! Motivo::query()->exists()) {
+                    Motivo::crearIniciales();
+                }
+
+                if (! Deposito::withTrashed()->exists()) {
+                    Deposito::create([
+                        'codigo' => 'DEP01',
+                        'nombre' => 'Depósito principal',
+                        'tipo' => 'deposito',
+                        'es_principal' => true,
+                        'activo' => true,
+                    ]);
                 }
             });
         });

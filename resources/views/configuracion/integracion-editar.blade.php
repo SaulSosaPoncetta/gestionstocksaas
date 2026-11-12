@@ -70,7 +70,17 @@
                         <div class="card-header bg-white fw-semibold">Comportamiento</div>
                         <div class="card-body row g-3">
                             @foreach ($campos as $clave => $campo)
-                                @if ($campo['tipo'] === 'bool')
+                                @if ($campo['tipo'] === 'deposito')
+                                    <div class="col-12">
+                                        <label class="form-label">{{ $campo['label'] }}</label>
+                                        <select name="opciones[{{ $clave }}]" class="form-select" style="max-width: 420px;">
+                                            <option value="">Depósito principal</option>
+                                            @foreach ($depositos as $d)
+                                                <option value="{{ $d->id }}" @selected((string) old("opciones.$clave", $integracion->opcion($clave)) === (string) $d->id)>{{ $d->etiqueta }}</option>
+                                            @endforeach
+                                        </select>
+                                    </div>
+                                @elseif ($campo['tipo'] === 'bool')
                                     <div class="col-12">
                                         <div class="form-check form-switch">
                                             <input class="form-check-input" type="checkbox" role="switch" name="opciones[{{ $clave }}]" id="op-{{ $clave }}" value="1"
@@ -89,9 +99,6 @@
                                     </div>
                                 @endif
                             @endforeach
-                            <div class="col-12 small text-muted">
-                                <i class="bi bi-info-circle"></i> El depósito que usa esta integración se elige cuando estén creados los depósitos.
-                            </div>
                         </div>
                     </div>
                 @endif

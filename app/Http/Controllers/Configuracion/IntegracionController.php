@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Configuracion;
 
 use App\Http\Controllers\Controller;
+use App\Models\Deposito;
 use App\Models\Integracion;
 use App\Support\EmpresaActual;
 use Illuminate\Http\Request;
@@ -11,10 +12,14 @@ class IntegracionController extends Controller
 {
     /**
      * Campos configurables de cada integración (se dibujan en la vista).
-     * El depósito por defecto se agrega en el paso 5.
+     * Tipos: select, bool, deposito.
      */
     public const CAMPOS = [
         'comercial' => [
+            'deposito_id' => [
+                'label' => 'Depósito por defecto (si Comercial no informa sucursal)',
+                'tipo' => 'deposito',
+            ],
             'maestro_productos' => [
                 'label' => 'El alta de productos la maneja',
                 'tipo' => 'select',
@@ -32,6 +37,10 @@ class IntegracionController extends Controller
             ],
         ],
         'mercado' => [
+            'deposito_id' => [
+                'label' => 'Depósito desde el que vende la tienda',
+                'tipo' => 'deposito',
+            ],
             'publicar' => [
                 'label' => 'Stock a publicar en la tienda',
                 'tipo' => 'select',
@@ -76,6 +85,7 @@ class IntegracionController extends Controller
             'integracion' => $this->obtener($sistema),
             'campos' => self::CAMPOS[$sistema] ?? [],
             'empresa' => EmpresaActual::modelo(),
+            'depositos' => Deposito::activos()->orderByDesc('es_principal')->orderBy('nombre')->get(),
         ]);
     }
 
@@ -96,6 +106,9 @@ class IntegracionController extends Controller
         foreach (self::CAMPOS[$sistema] ?? [] as $clave => $campo) {
             if ($campo['tipo'] === 'bool') {
                 $opciones[$clave] = $request->boolean("opciones.{$clave}");
+            } elseif ($campo['tipo'] === 'deposito') {
+                $depositoId = $request->integer("opciones.{$clave}");
+                $opciones[$clave] = $depositoId && Deposito::activos()->whereKey($depositoId)->exists() ? $depositoId : null;
             } else {
                 $valor = $request->input("opciones.{$clave}");
                 if (is_string($valor) && array_key_exists($valor, $campo['opciones'])) {

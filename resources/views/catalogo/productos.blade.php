@@ -1,5 +1,6 @@
 {{-- resources/views/catalogo/productos.blade.php --}}
 @extends('layouts.app')
+@use('App\Support\Formato')
 
 @section('titulo', 'Productos')
 
@@ -122,13 +123,31 @@
                         <td class="small">{{ $p->marca?->nombre }}</td>
                         <td class="text-end">$ {{ number_format((float) $p->costo, 2, ',', '.') }}</td>
                         <td class="text-end fw-semibold">$ {{ number_format($p->precio_final, 2, ',', '.') }}</td>
-                        <td class="text-end text-muted small">
-                            {{-- Se completa en el paso 6 --}}
-                            {{ $p->manejaStock() ? '—' : 'No controla' }}
+                        <td class="text-end text-nowrap">
+                            @if ($p->esAgrupador())
+                                <span class="fw-semibold">{{ Formato::cantidad($stockAgrupadores[$p->id] ?? 0) }}</span>
+                                <small class="text-muted">{{ $p->unidad?->abreviatura }}</small>
+                                <div class="small text-muted">en variantes</div>
+                            @elseif ($p->manejaStock())
+                                @php
+                                    $stock = (float) $p->stock_total;
+                                    $bajo = (float) $p->stock_minimo > 0 && $stock < (float) $p->stock_minimo;
+                                @endphp
+                                <span class="fw-semibold {{ $stock < 0 || $bajo ? 'text-danger' : '' }}">{{ Formato::cantidad($stock) }}</span>
+                                <small class="text-muted">{{ $p->unidad?->abreviatura }}</small>
+                                @if ($bajo)
+                                    <i class="bi bi-exclamation-triangle-fill text-danger" title="Bajo el mínimo ({{ Formato::cantidad($p->stock_minimo) }})"></i>
+                                @endif
+                            @else
+                                <span class="text-muted small">No controla</span>
+                            @endif
                         </td>
-                        <td class="text-end">
+                        <td class="text-end text-nowrap">
+                            @if ($p->manejaStock())
+                                <a href="{{ route('inventario.kardex', $p) }}" class="btn btn-sm btn-outline-secondary" title="Kardex"><i class="bi bi-journal-text"></i></a>
+                            @endif
                             @if ($puedeEditar)
-                                <a href="{{ route('catalogo.productos.edit', $p) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                                <a href="{{ route('catalogo.productos.edit', $p) }}" class="btn btn-sm btn-outline-secondary" title="Editar"><i class="bi bi-pencil"></i></a>
                             @endif
                         </td>
                     </tr>

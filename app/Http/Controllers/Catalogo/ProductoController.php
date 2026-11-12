@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ProductoRequest;
 use App\Models\AlicuotaIva;
 use App\Models\Categoria;
+use App\Models\Existencia;
 use App\Models\Marca;
 use App\Models\Producto;
 use App\Models\ProductoCodigo;
 use App\Models\UnidadMedida;
 use App\Services\ProductoService;
+use App\Services\StockService;
 use App\Support\EmpresaActual;
 use Illuminate\Http\Request;
 
@@ -30,9 +32,12 @@ class ProductoController extends Controller
             'estado' => $request->query('estado', 'activos'),
         ];
 
+        $permitidos = $request->user()->depositosPermitidos()->pluck('id')->all();
+
         $consulta = Producto::query()
             ->with(['categoria', 'marca', 'alicuota', 'unidad', 'imagenPrincipal'])
-            ->withCount('variantes');
+            ->withCount('variantes')
+            ->withSum(['existencias as stock_total' => fn ($q) => $q->whereIn('deposito_id', $permitidos)], 'cantidad');
 
         // Sin búsqueda se listan los productos "de primer nivel"; con búsqueda también las variantes
         if ($filtros['q'] === '') {
@@ -55,8 +60,19 @@ class ProductoController extends Controller
 
         $productos = $consulta->orderBy('nombre')->paginate(25)->withQueryString();
 
+        // Stock de los productos con variantes = suma de sus variantes
+        $agrupadores = $productos->getCollection()->filter(fn ($p) => $p->esAgrupador())->pluck('id');
+        $stockAgrupadores = $agrupadores->isEmpty() ? collect() : Existencia::query()
+            ->join('productos', 'productos.id', '=', 'existencias.producto_id')
+            ->whereIn('productos.padre_id', $agrupadores)
+            ->whereIn('existencias.deposito_id', $permitidos)
+            ->groupBy('productos.padre_id')
+            ->selectRaw('productos.padre_id, SUM(existencias.cantidad) AS total')
+            ->pluck('total', 'padre_id');
+
         return view('catalogo.productos', [
             'productos' => $productos,
+            'stockAgrupadores' => $stockAgrupadores,
             'filtros' => $filtros,
             'categorias' => Categoria::arbol(),
             'marcas' => Marca::orderBy('nombre')->get(),
@@ -105,17 +121,28 @@ class ProductoController extends Controller
         return redirect()->route('catalogo.productos.edit', $producto)->with('success', $mensaje);
     }
 
-    public function edit(Producto $producto)
+    public function edit(Request $request, Producto $producto)
     {
         $producto->load([
             'padre',
+            'unidad',
+            'alicuota',
             'codigosPropios',
             'presentaciones.codigo',
             'imagenes',
-            'variantes',
+            'variantes' => fn ($q) => $q->withSum('existencias as stock_total', 'cantidad'),
         ]);
 
-        return view('catalogo.producto-form', $this->datosFormulario($producto));
+        $existencias = Existencia::query()
+            ->with(['deposito', 'ubicacion'])
+            ->where('producto_id', $producto->id)
+            ->whereIn('deposito_id', $request->user()->depositosPermitidos()->pluck('id'))
+            ->where(fn ($q) => $q->where('cantidad', '!=', 0)->orWhere('reservado', '!=', 0))
+            ->get()
+            ->sortBy(fn ($e) => [$e->deposito?->nombre, $e->ubicacion?->codigo ?? ''])
+            ->groupBy('deposito_id');
+
+        return view('catalogo.producto-form', $this->datosFormulario($producto, $existencias));
     }
 
     public function update(ProductoRequest $request, Producto $producto)
@@ -127,7 +154,12 @@ class ProductoController extends Controller
 
     public function destroy(Producto $producto)
     {
-        // En el paso 6 se agrega el control de stock y movimientos
+        $ids = $producto->variantes()->pluck('id')->push($producto->id);
+
+        if (Existencia::whereIn('producto_id', $ids)->where('cantidad', '!=', 0)->exists()) {
+            return back()->with('error', 'No se puede eliminar: tiene stock. Podés desactivarlo, o dejar el stock en cero primero.');
+        }
+
         $padreId = $producto->padre_id;
         $this->servicio->eliminar($producto);
 
@@ -144,55 +176,97 @@ class ProductoController extends Controller
     {
         $texto = trim((string) $request->query('q'));
         $soloStockeables = $request->boolean('stockeables');
+        $depositoId = $request->integer('deposito_id') ?: null;
 
         if ($texto === '') {
-            return response()->json([]);
+            return response()->json(['exacto' => false, 'resultados' => []]);
         }
 
-        $formatear = fn (Producto $p, $presentacion = null) => [
+        // 1) Código exacto (lector de barras)
+        $exacto = false;
+        $presentacion = null;
+        $encontrado = $this->servicio->buscarPorCodigo($texto);
+
+        if ($encontrado && (! $soloStockeables || $encontrado['producto']->manejaStock())) {
+            $resultados = collect([$encontrado['producto']->load('unidad')]);
+            $presentacion = $encontrado['presentacion'];
+            $exacto = true;
+        } else {
+            // 2) Coincidencias por nombre o SKU
+            $resultados = Producto::with('unidad')
+                ->activos()
+                ->when($soloStockeables, fn ($q) => $q->stockeables())
+                ->when(! $soloStockeables, fn ($q) => $q->where('tipo', '!=', Producto::TIPO_CON_VARIANTES))
+                ->buscar($texto)
+                ->orderBy('nombre')
+                ->limit(15)
+                ->get();
+        }
+
+        $resumen = $depositoId && $resultados->isNotEmpty()
+            ? app(StockService::class)->resumen($resultados->pluck('id')->all(), $depositoId)
+            : [];
+
+        $formatear = fn (Producto $p) => [
             'id' => $p->id,
             'sku' => $p->sku,
             'nombre' => $p->nombre,
             'tipo' => $p->tipo,
             'unidad' => $p->unidad?->abreviatura,
             'permite_decimales' => (bool) $p->unidad?->permite_decimales,
-            'costo' => (float) $p->costo,
+            'costo' => $p->costo_valuacion,
             'precio_venta' => (float) $p->precio_venta,
             'usa_lotes' => $p->usa_lotes,
             'usa_series' => $p->usa_series,
-            'presentacion' => $presentacion ? [
+            'stock' => $depositoId ? (float) ($resumen[$p->id]['total'] ?? 0) : null,
+            'stock_ubicaciones' => $depositoId ? (object) ($resumen[$p->id]['ubicaciones'] ?? []) : null,
+            'presentacion' => $presentacion && $presentacion->producto_id === $p->id ? [
                 'id' => $presentacion->id,
                 'nombre' => $presentacion->nombre,
                 'cantidad' => (float) $presentacion->cantidad,
             ] : null,
         ];
 
-        // 1) Código exacto (lector de barras)
-        if ($encontrado = $this->servicio->buscarPorCodigo($texto)) {
-            $producto = $encontrado['producto']->load('unidad');
-
-            if (! $soloStockeables || $producto->manejaStock()) {
-                return response()->json([$formatear($producto, $encontrado['presentacion'])]);
-            }
-        }
-
-        // 2) Coincidencias por nombre o SKU
-        $resultados = Producto::with('unidad')
-            ->activos()
-            ->when($soloStockeables, fn ($q) => $q->stockeables())
-            ->when(! $soloStockeables, fn ($q) => $q->where('tipo', '!=', Producto::TIPO_CON_VARIANTES))
-            ->buscar($texto)
-            ->orderBy('nombre')
-            ->limit(15)
-            ->get();
-
-        return response()->json($resultados->map(fn ($p) => $formatear($p))->values());
+        return response()->json([
+            'exacto' => $exacto,
+            'resultados' => $resultados->map($formatear)->values(),
+        ]);
     }
 
-    protected function datosFormulario(Producto $producto): array
+    /**
+     * Stock de varios productos en un depósito (total y por ubicación).
+     * GET /catalogo/productos/stock?deposito_id=1&ids[]=5&ids[]=8
+     */
+    public function stock(Request $request, StockService $stock)
+    {
+        $datos = $request->validate([
+            'deposito_id' => ['required', 'integer'],
+            'ids' => ['required', 'array', 'max:500'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $depositoId = (int) $datos['deposito_id'];
+        abort_unless($request->user()->puedeOperarDeposito($depositoId), 403);
+
+        $ids = array_values(array_unique(array_map('intval', $datos['ids'])));
+        $resumen = $stock->resumen($ids, $depositoId);
+
+        $respuesta = [];
+        foreach ($ids as $id) {
+            $respuesta[$id] = [
+                'total' => (float) ($resumen[$id]['total'] ?? 0),
+                'ubicaciones' => (object) ($resumen[$id]['ubicaciones'] ?? []),
+            ];
+        }
+
+        return response()->json((object) $respuesta);
+    }
+
+    protected function datosFormulario(Producto $producto, $existencias = null): array
     {
         return [
             'producto' => $producto,
+            'existencias' => $existencias ?? collect(),
             'empresa' => EmpresaActual::modelo(),
             'categorias' => Categoria::arbol(true),
             'marcas' => Marca::activas()->orderBy('nombre')->get(),

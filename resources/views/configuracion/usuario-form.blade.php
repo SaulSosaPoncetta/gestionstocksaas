@@ -66,6 +66,37 @@
                     <input type="password" name="password_confirmation" class="form-control" autocomplete="new-password">
                 </div>
 
+                <div class="col-12"><hr class="my-1"></div>
+
+                {{-- Depósitos que puede operar --}}
+                @php
+                    $todos = $errors->any() ? (bool) old('todos_los_depositos') : $usuario->todos_los_depositos;
+                    $seleccionados = array_map('intval', old('depositos', $usuario->depositos->pluck('id')->all()));
+                @endphp
+                <div class="col-12" id="bloqueDepositos">
+                    <label class="form-label">Depósitos que puede operar</label>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" role="switch" name="todos_los_depositos" id="todosDepositos" value="1"
+                               @checked($todos) onchange="mostrarDepositos()">
+                        <label class="form-check-label" for="todosDepositos">Todos los depósitos</label>
+                    </div>
+                    <div id="listaDepositos" class="border rounded p-2" style="max-height: 220px; overflow:auto;">
+                        @forelse ($depositos as $d)
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="depositos[]" value="{{ $d->id }}" id="dep{{ $d->id }}"
+                                       @checked(in_array($d->id, $seleccionados, true))>
+                                <label class="form-check-label" for="dep{{ $d->id }}">
+                                    {{ $d->etiqueta }}
+                                    @if ($d->es_principal)<span class="badge text-bg-light border">Principal</span>@endif
+                                </label>
+                            </div>
+                        @empty
+                            <span class="text-muted small">No hay depósitos activos.</span>
+                        @endforelse
+                    </div>
+                    <div class="form-text" id="avisoAdmin">Los administradores operan siempre todos los depósitos.</div>
+                </div>
+
                 <div class="col-12">
                     <div class="alert alert-light border small mb-0">
                         <strong>Roles:</strong>
@@ -83,3 +114,24 @@
         </div>
     </form>
 @endsection
+
+@push('scripts')
+<script>
+    function mostrarDepositos() {
+        const rol = document.querySelector('[name="rol"]:not([type="hidden"])')?.value
+            ?? document.querySelector('input[type="hidden"][name="rol"]')?.value;
+        const esAdmin = rol === 'admin';
+        const todos = document.getElementById('todosDepositos');
+
+        if (esAdmin) {
+            todos.checked = true;
+        }
+        todos.disabled = esAdmin;
+        document.getElementById('listaDepositos').classList.toggle('d-none', todos.checked);
+        document.getElementById('avisoAdmin').classList.toggle('d-none', !esAdmin);
+    }
+
+    document.querySelector('select[name="rol"]')?.addEventListener('change', mostrarDepositos);
+    mostrarDepositos();
+</script>
+@endpush

@@ -17,7 +17,7 @@
     <div class="row g-3 mb-4">
         @foreach ($indicadores as $ind)
             <div class="col-6 col-xl-3">
-                <div class="card h-100">
+                <div class="card h-100 {{ $ind['url'] ? 'position-relative' : '' }}">
                     <div class="card-body d-flex align-items-center gap-3">
                         <div class="rounded-3 p-3 bg-{{ $ind['color'] }}-subtle text-{{ $ind['color'] }}">
                             <i class="bi {{ $ind['icono'] }} fs-4"></i>
@@ -26,6 +26,9 @@
                             <div class="text-muted small">{{ $ind['titulo'] }}</div>
                             <div class="fs-4 fw-bold">{{ number_format($ind['valor'], 0, ',', '.') }}</div>
                         </div>
+                        @if ($ind['url'])
+                            <a href="{{ $ind['url'] }}" class="stretched-link" aria-label="{{ $ind['titulo'] }}"></a>
+                        @endif
                     </div>
                 </div>
             </div>

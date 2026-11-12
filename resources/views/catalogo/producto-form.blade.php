@@ -1,5 +1,6 @@
 {{-- resources/views/catalogo/producto-form.blade.php --}}
 @extends('layouts.app')
+@use('App\Support\Formato')
 
 @section('titulo', $producto->exists ? $producto->nombre : 'Nuevo producto')
 
@@ -219,6 +220,13 @@
                             <div class="form-text">Con IVA</div>
                         </div>
 
+                        @if (! $esNuevo && $producto->manejaStock())
+                            <div class="col-12 small text-muted">
+                                Costo promedio ponderado del stock: <strong>{{ Formato::moneda($producto->costo_promedio) }}</strong>
+                                (lo calcula el sistema con cada ingreso; el costo de arriba es el de reposición).
+                            </div>
+                        @endif
+
                         @if ($esAgrupador && ! $esNuevo)
                             <div class="col-12">
                                 <div class="form-check">
@@ -285,9 +293,52 @@
                                 </div>
                             </div>
                             <div class="col-12">
-                                <div class="alert alert-light border small mb-0">
-                                    <i class="bi bi-info-circle"></i> El stock por depósito se muestra acá cuando estén creados los depósitos y los movimientos.
-                                </div>
+                                <hr class="my-1">
+                                @if ($esNuevo)
+                                    <div class="alert alert-light border small mb-0">
+                                        <i class="bi bi-info-circle"></i> Cuando guardes el producto vas a poder cargarle stock desde <strong>Movimientos</strong>.
+                                    </div>
+                                @elseif ($esAgrupador)
+                                    <div class="alert alert-light border small mb-0">
+                                        <i class="bi bi-info-circle"></i> El stock se lleva en cada variante (columna Stock de la solapa Variantes).
+                                    </div>
+                                @elseif (! $producto->manejaStock())
+                                    <div class="alert alert-light border small mb-0">Este producto no controla stock.</div>
+                                @else
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <h2 class="h6 mb-0">Stock actual</h2>
+                                        <a href="{{ route('inventario.kardex', $producto) }}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-journal-text"></i> Ver kardex</a>
+                                    </div>
+                                    @if ($existencias->isEmpty())
+                                        <p class="text-muted small mb-0">Sin stock en tus depósitos.</p>
+                                    @else
+                                        <table class="table table-sm mb-0" style="max-width: 640px;">
+                                            <thead>
+                                            <tr><th>Depósito / ubicación</th><th class="text-end">Stock</th><th class="text-end">Reservado</th><th class="text-end">Disponible</th></tr>
+                                            </thead>
+                                            <tbody>
+                                            @foreach ($existencias as $filas)
+                                                <tr class="table-light fw-semibold">
+                                                    <td>{{ $filas->first()->deposito?->nombre }}</td>
+                                                    <td class="text-end">{{ Formato::cantidad($filas->sum('cantidad')) }}</td>
+                                                    <td class="text-end">{{ Formato::cantidad($filas->sum('reservado')) }}</td>
+                                                    <td class="text-end">{{ Formato::cantidad($filas->sum(fn ($e) => $e->disponible)) }}</td>
+                                                </tr>
+                                                @if ($filas->count() > 1 || $filas->first()->ubicacion_id)
+                                                    @foreach ($filas as $e)
+                                                        <tr class="small">
+                                                            <td class="ps-4"><i class="bi bi-geo text-muted"></i> {{ $e->ubicacion?->codigo ?? 'Sin ubicar' }}</td>
+                                                            <td class="text-end">{{ Formato::cantidad($e->cantidad) }}</td>
+                                                            <td class="text-end">{{ Formato::cantidad($e->reservado) }}</td>
+                                                            <td class="text-end">{{ Formato::cantidad($e->disponible) }}</td>
+                                                        </tr>
+                                                    @endforeach
+                                                @endif
+                                            @endforeach
+                                            </tbody>
+                                        </table>
+                                    @endif
+                                @endif
                             </div>
                         </div>
                     </div>
@@ -393,6 +444,7 @@
                                         <th>Costo</th>
                                         <th>Precio sin IVA</th>
                                         <th>Stock mín.</th>
+                                        <th class="text-end">Stock</th>
                                         <th class="text-center">Activa</th>
                                         <th></th>
                                     </tr>
@@ -405,6 +457,9 @@
                                             <td><input type="number" name="variantes[{{ $v->id }}][costo]" class="form-control form-control-sm" step="any" min="0" value="{{ old("variantes.$v->id.costo", (float) $v->costo) }}" required></td>
                                             <td><input type="number" name="variantes[{{ $v->id }}][precio_venta]" class="form-control form-control-sm" step="any" min="0" value="{{ old("variantes.$v->id.precio_venta", (float) $v->precio_venta) }}" required></td>
                                             <td><input type="number" name="variantes[{{ $v->id }}][stock_minimo]" class="form-control form-control-sm" step="any" min="0" value="{{ old("variantes.$v->id.stock_minimo", (float) $v->stock_minimo) }}"></td>
+                                            <td class="text-end fw-semibold">
+                                                <a href="{{ route('inventario.kardex', $v) }}" class="text-decoration-none">{{ Formato::cantidad($v->stock_total ?? 0) }}</a>
+                                            </td>
                                             <td class="text-center">
                                                 <input type="hidden" name="variantes[{{ $v->id }}][activo]" value="0">
                                                 <input class="form-check-input" type="checkbox" name="variantes[{{ $v->id }}][activo]" value="1" @checked(old("variantes.$v->id.activo", $v->activo))>

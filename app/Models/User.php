@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Support\Collection;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -31,6 +33,7 @@ class User extends Authenticatable
         'password',
         'rol',
         'activo',
+        'todos_los_depositos',
         'ultimo_acceso',
     ];
 
@@ -46,6 +49,7 @@ class User extends Authenticatable
             'ultimo_acceso' => 'datetime',
             'password' => 'hashed',
             'activo' => 'boolean',
+            'todos_los_depositos' => 'boolean',
         ];
     }
 
@@ -54,6 +58,31 @@ class User extends Authenticatable
     public function empresa(): BelongsTo
     {
         return $this->belongsTo(Empresa::class);
+    }
+
+    public function depositos(): BelongsToMany
+    {
+        return $this->belongsToMany(Deposito::class, 'deposito_usuario')->withTimestamps();
+    }
+
+    /* ---------- Depósitos ---------- */
+
+    /** Superadmin y administradores operan siempre todos los depósitos. */
+    public function operaTodosLosDepositos(): bool
+    {
+        return $this->esSuperadmin() || $this->esAdmin() || $this->todos_los_depositos;
+    }
+
+    /** Depósitos activos que este usuario puede operar. */
+    public function depositosPermitidos(): Collection
+    {
+        return Deposito::activos()->accesiblesPara($this)->orderByDesc('es_principal')->orderBy('nombre')->get();
+    }
+
+    public function puedeOperarDeposito(int $depositoId): bool
+    {
+        return $this->operaTodosLosDepositos()
+            || $this->depositos()->where('depositos.id', $depositoId)->exists();
     }
 
     /* ---------- Roles ---------- */
