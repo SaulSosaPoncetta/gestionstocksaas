@@ -22,6 +22,7 @@ use App\Http\Controllers\Inventario\DepositoController;
 use App\Http\Controllers\Inventario\MovimientoController;
 use App\Http\Controllers\Inventario\SerieController;
 use App\Http\Controllers\Inventario\StockController;
+use App\Http\Controllers\Inventario\TomaInventarioController;
 use App\Http\Controllers\Inventario\TransferenciaController;
 use App\Http\Controllers\Inventario\UbicacionController;
 use App\Http\Controllers\Inventario\VencimientoController;
@@ -94,6 +95,22 @@ Route::middleware('auth')->group(function () {
 
             Route::post('/transferencias/{transferencia}/anular', [TransferenciaController::class, 'anular'])
                 ->middleware('rol:admin,encargado')->whereNumber('transferencia')->name('transferencias.anular');
+
+            /* Inventario físico: el encargado arma y cierra la toma; el operador cuenta */
+            Route::middleware('rol:admin,encargado,operador')->group(function () {
+                Route::get('/tomas', [TomaInventarioController::class, 'index'])->name('tomas.index');
+                Route::get('/tomas/{toma}', [TomaInventarioController::class, 'show'])->whereNumber('toma')->name('tomas.show');
+                Route::get('/tomas/{toma}/planilla', [TomaInventarioController::class, 'planilla'])->whereNumber('toma')->name('tomas.planilla');
+                Route::post('/tomas/{toma}/conteo', [TomaInventarioController::class, 'conteo'])->whereNumber('toma')->name('tomas.conteo');
+                Route::post('/tomas/{toma}/agregar', [TomaInventarioController::class, 'agregar'])->whereNumber('toma')->name('tomas.agregar');
+            });
+
+            Route::middleware('rol:admin,encargado')->group(function () {
+                Route::get('/tomas/nueva', [TomaInventarioController::class, 'create'])->name('tomas.create');
+                Route::post('/tomas', [TomaInventarioController::class, 'store'])->name('tomas.store');
+                Route::post('/tomas/{toma}/cerrar', [TomaInventarioController::class, 'cerrar'])->whereNumber('toma')->name('tomas.cerrar');
+                Route::post('/tomas/{toma}/cancelar', [TomaInventarioController::class, 'cancelar'])->whereNumber('toma')->name('tomas.cancelar');
+            });
         });
 
         /* Abastecimiento (módulo que se habilita por plan) */

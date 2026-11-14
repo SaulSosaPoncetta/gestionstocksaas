@@ -82,6 +82,15 @@
                             <span class="badge rounded-pill text-bg-warning ms-auto">{{ $transferenciasPendientes }}</span>
                         @endif
                     </a>
+                    @if ($usuario->tieneRol('admin', 'encargado', 'operador'))
+                        @php($tomasEnCurso = \App\Models\TomaInventario::enCurso()->whereIn('deposito_id', $usuario->depositosPermitidos()->pluck('id'))->count())
+                        <a class="nav-link {{ request()->routeIs('inventario.tomas.*') ? 'active' : '' }}" href="{{ route('inventario.tomas.index') }}">
+                            <i class="bi bi-clipboard-check"></i> Inventario físico
+                            @if ($tomasEnCurso)
+                                <span class="badge rounded-pill text-bg-warning ms-auto">{{ $tomasEnCurso }}</span>
+                            @endif
+                        </a>
+                    @endif
                     @if ($usuario->tieneRol('admin', 'encargado'))
                         <a class="nav-link {{ request()->routeIs('inventario.depositos.*', 'inventario.ubicaciones.*') ? 'active' : '' }}" href="{{ route('inventario.depositos.index') }}">
                             <i class="bi bi-buildings"></i> Depósitos

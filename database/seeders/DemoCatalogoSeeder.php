@@ -19,6 +19,7 @@ use App\Models\User;
 use App\Services\CompraService;
 use App\Services\ProductoService;
 use App\Services\SalidaService;
+use App\Services\TomaInventarioService;
 use App\Services\StockService;
 use App\Services\TransferenciaService;
 use App\Support\EmpresaActual;
@@ -207,7 +208,29 @@ class DemoCatalogoSeeder extends Seeder
 
             // Salidas a clientes: una reserva parcialmente entregada y un remito directo con número de serie
             $this->salidas($gaseosa, $harina, $taladro, $principal, $a011);
+
+            // Inventario físico: un conteo cíclico del estante A-01-1 en curso (sin congelar el depósito)
+            $this->tomaInventario($gaseosa, $principal, $a011);
         });
+    }
+
+    protected function tomaInventario(Producto $gaseosa, Deposito $principal, ?int $a011): void
+    {
+        $admin = User::where('email', 'admin@demo.com')->first();
+        $servicio = app(TomaInventarioService::class);
+
+        $toma = $servicio->iniciar([
+            'deposito_id' => $principal->id,
+            'ubicacion_id' => $a011,
+            'descripcion' => 'Conteo cíclico estante A-01-1 (ejemplo)',
+            'congela' => false,
+        ], $admin);
+
+        // Se contaron 2 gaseosas menos de lo que dice el sistema
+        $item = $toma->items->firstWhere('producto_id', $gaseosa->id);
+        if ($item) {
+            $servicio->registrarConteo($toma, [$item->id => ['contado' => (float) $item->teorico - 2]], $admin);
+        }
     }
 
     protected function salidas(Producto $gaseosa, Producto $harina, Producto $taladro, Deposito $principal, ?int $a011): void

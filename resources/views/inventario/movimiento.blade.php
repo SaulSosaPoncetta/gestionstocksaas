@@ -59,6 +59,13 @@
         </div>
     @endif
 
+    @if ($movimiento->tomaInventario)
+        <div class="alert alert-info">
+            <i class="bi bi-clipboard-check"></i> Ajuste generado al cerrar la
+            <a href="{{ route('inventario.tomas.show', $movimiento->tomaInventario) }}" class="alert-link">toma de inventario N° {{ $movimiento->tomaInventario->numero_texto }}</a>.
+        </div>
+    @endif
+
     @if ($movimiento->remito)
         <div class="alert alert-info">
             <i class="bi bi-truck"></i> Generado por el

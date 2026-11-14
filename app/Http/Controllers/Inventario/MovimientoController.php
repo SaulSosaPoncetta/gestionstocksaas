@@ -135,6 +135,7 @@ class MovimientoController extends Controller
             'transferencia',
             'recepcionCompra.orden',
             'remito.cliente',
+            'tomaInventario',
             'deposito',
             'depositoDestino',
             'usuario',

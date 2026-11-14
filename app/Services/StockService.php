@@ -11,6 +11,7 @@ use App\Models\Movimiento;
 use App\Models\Numerador;
 use App\Models\Producto;
 use App\Models\Serie;
+use App\Models\TomaInventario;
 use App\Models\Ubicacion;
 use App\Models\User;
 use App\Support\EmpresaActual;
@@ -331,6 +332,10 @@ class StockService
         $interno = (bool) ($opciones['interno_transferencia'] ?? false);
         $lineas = $this->normalizar($lineas, $depositoId, $empresa, $usuario, $esAnulacion, $interno);
 
+        if (empty($opciones['interno_inventario'])) {
+            $this->controlarCongelados(collect($lineas)->pluck('deposito_id')->push($depositoId)->unique()->all());
+        }
+
         try {
             return DB::transaction(fn () => $this->aplicar($tipo, $depositoId, $lineas, $opciones, $usuario, $referencia));
         } catch (UniqueConstraintViolationException $e) {
@@ -517,6 +522,7 @@ class StockService
             'transferencia_id' => $opciones['transferencia_id'] ?? null,
             'recepcion_compra_id' => $opciones['recepcion_compra_id'] ?? null,
             'remito_id' => $opciones['remito_id'] ?? null,
+            'toma_inventario_id' => $opciones['toma_inventario_id'] ?? null,
         ]);
 
         foreach ($items as $item) {
@@ -530,6 +536,24 @@ class StockService
         event(new StockActualizado($movimiento->empresa_id, $movimiento->id, $productoIds, $depositoIds));
 
         return $movimiento->load('items');
+    }
+
+    /** Un depósito con una toma de inventario "congelada" en curso no acepta movimientos hasta que se cierre. */
+    protected function controlarCongelados(array $depositoIds): void
+    {
+        $toma = TomaInventario::query()
+            ->with('deposito')
+            ->where('estado', TomaInventario::EN_CURSO)
+            ->where('congela', true)
+            ->whereIn('deposito_id', $depositoIds)
+            ->first();
+
+        if ($toma) {
+            throw ValidationException::withMessages([
+                'deposito_id' => "El depósito {$toma->deposito?->nombre} está congelado por la toma de inventario N° {$toma->numero_texto}: "
+                    . 'no admite movimientos hasta que se cierre o se cancele.',
+            ]);
+        }
     }
 
     protected function controlarReservas(array $items, $productos, $depositos): array

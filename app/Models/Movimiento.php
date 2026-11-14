@@ -45,6 +45,7 @@ class Movimiento extends Model
         'comercial' => 'GestiónComercial',
         'mercado' => 'MiGestión Mercado',
         'api' => 'API',
+        'inventario' => 'Inventario físico',
     ];
 
     protected $table = 'movimientos';
@@ -57,6 +58,7 @@ class Movimiento extends Model
         'transferencia_id',
         'recepcion_compra_id',
         'remito_id',
+        'toma_inventario_id',
         'estado',
         'origen',
         'referencia_externa',
@@ -109,6 +111,11 @@ class Movimiento extends Model
     public function remito(): BelongsTo
     {
         return $this->belongsTo(Remito::class);
+    }
+
+    public function tomaInventario(): BelongsTo
+    {
+        return $this->belongsTo(TomaInventario::class);
     }
 
     public function deposito(): BelongsTo
