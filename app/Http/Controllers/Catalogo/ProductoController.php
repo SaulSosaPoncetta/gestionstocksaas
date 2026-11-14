@@ -207,6 +207,10 @@ class ProductoController extends Controller
             ? app(StockService::class)->resumen($resultados->pluck('id')->all(), $depositoId)
             : [];
 
+        $conocidos = \App\Http\Controllers\Inventario\MovimientoController::lotesConocidos(
+            $resultados->where('usa_lotes', true)->pluck('id')->all()
+        );
+
         $formatear = fn (Producto $p) => [
             'id' => $p->id,
             'sku' => $p->sku,
@@ -220,6 +224,8 @@ class ProductoController extends Controller
             'usa_series' => $p->usa_series,
             'stock' => $depositoId ? (float) ($resumen[$p->id]['total'] ?? 0) : null,
             'stock_ubicaciones' => $depositoId ? (object) ($resumen[$p->id]['ubicaciones'] ?? []) : null,
+            'stock_lotes' => $depositoId ? ($resumen[$p->id]['lotes'] ?? []) : null,
+            'lotes_conocidos' => $p->usa_lotes ? ($conocidos[$p->id] ?? []) : [],
             'presentacion' => $presentacion && $presentacion->producto_id === $p->id ? [
                 'id' => $presentacion->id,
                 'nombre' => $presentacion->nombre,
@@ -256,6 +262,7 @@ class ProductoController extends Controller
             $respuesta[$id] = [
                 'total' => (float) ($resumen[$id]['total'] ?? 0),
                 'ubicaciones' => (object) ($resumen[$id]['ubicaciones'] ?? []),
+                'lotes' => $resumen[$id]['lotes'] ?? [],
             ];
         }
 

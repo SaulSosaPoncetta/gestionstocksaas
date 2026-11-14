@@ -144,6 +144,12 @@ class Producto extends Model
         return $this->hasMany(Existencia::class);
     }
 
+    /** Proveedores que lo venden (con código, costo y unidad de compra). */
+    public function proveedores(): HasMany
+    {
+        return $this->hasMany(ProductoProveedor::class)->orderByDesc('es_principal');
+    }
+
     public function imagenPrincipal(): HasOne
     {
         return $this->hasOne(ProductoImagen::class)->ofMany('orden', 'min');

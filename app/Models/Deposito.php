@@ -33,6 +33,7 @@ class Deposito extends Model
         'telefono',
         'responsable_id',
         'es_principal',
+        'es_transito',
         'usa_ubicaciones',
         'permite_stock_negativo',
         'activo',
@@ -43,6 +44,7 @@ class Deposito extends Model
     {
         return [
             'es_principal' => 'boolean',
+            'es_transito' => 'boolean',
             'usa_ubicaciones' => 'boolean',
             'permite_stock_negativo' => 'boolean',
             'activo' => 'boolean',
@@ -81,7 +83,25 @@ class Deposito extends Model
     public static function principal(): ?self
     {
         return static::where('es_principal', true)->first()
-            ?? static::where('activo', true)->orderBy('id')->first();
+            ?? static::activos()->orderBy('id')->first();
+    }
+
+    /**
+     * Depósito virtual donde queda la mercadería mientras viaja entre depósitos.
+     * Uno por empresa; se crea la primera vez que se necesita. No aparece en listados ni selectores.
+     */
+    public static function transito(): self
+    {
+        return static::withTrashed()->firstOrCreate(
+            ['es_transito' => true],
+            [
+                'codigo' => '_TRANSITO',
+                'nombre' => 'En tránsito',
+                'tipo' => 'virtual',
+                'activo' => true,
+                'permite_stock_negativo' => false,
+            ]
+        );
     }
 
     /** Deja este depósito como único principal de la empresa. */
@@ -105,9 +125,15 @@ class Deposito extends Model
 
     /* ---------- Scopes ---------- */
 
+    /** Depósitos activos y visibles (no incluye "En tránsito"). */
     public function scopeActivos($query)
     {
-        return $query->where('activo', true);
+        return $query->where('activo', true)->where('es_transito', false);
+    }
+
+    public function scopeVisibles($query)
+    {
+        return $query->where('es_transito', false);
     }
 
     /** Depósitos que puede operar un usuario. */

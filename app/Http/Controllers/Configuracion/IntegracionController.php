@@ -25,6 +25,11 @@ class IntegracionController extends Controller
                 'tipo' => 'select',
                 'opciones' => ['stock' => 'GestiónStock', 'comercial' => 'GestiónComercial'],
             ],
+            'maestro_proveedores' => [
+                'label' => 'El alta de proveedores la maneja',
+                'tipo' => 'select',
+                'opciones' => ['stock' => 'GestiónStock', 'comercial' => 'GestiónComercial'],
+            ],
             'descontar_al' => [
                 'label' => 'Descontar stock al emitir',
                 'tipo' => 'select',

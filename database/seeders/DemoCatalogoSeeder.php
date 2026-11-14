@@ -9,11 +9,15 @@ use App\Models\Empresa;
 use App\Models\Marca;
 use App\Models\Motivo;
 use App\Models\Producto;
+use App\Models\ProductoProveedor;
+use App\Models\Proveedor;
 use App\Models\Ubicacion;
 use App\Models\UnidadMedida;
 use App\Models\User;
+use App\Services\CompraService;
 use App\Services\ProductoService;
 use App\Services\StockService;
+use App\Services\TransferenciaService;
 use App\Support\EmpresaActual;
 use Illuminate\Database\Seeder;
 
@@ -25,10 +29,13 @@ class DemoCatalogoSeeder extends Seeder
 {
     public function run(Empresa $empresa): void
     {
-        EmpresaActual::usar($empresa->id, function () {
+        EmpresaActual::usar($empresa->id, function () use ($empresa) {
             if (Producto::query()->exists()) {
                 return;
             }
+
+            // La empresa demo trabaja con lotes y con números de serie
+            $empresa->update(['usa_lotes' => true, 'usa_series' => true]);
 
             $this->depositos();
 
@@ -109,6 +116,23 @@ class DemoCatalogoSeeder extends Seeder
                 ],
             ]);
 
+            // Producto con número de serie
+            $taladro = $servicio->guardar(new Producto(['tipo' => Producto::TIPO_SIMPLE]), [
+                'nombre' => 'Taladro percutor 650 W',
+                'unidad_medida_id' => $un,
+                'alicuota_iva_id' => $iva21,
+                'controla_stock' => true,
+                'usa_series' => true,
+                'costo' => 45000,
+                'margen' => 40,
+                'precio_venta' => 63000,
+                'stock_minimo' => 2,
+                'punto_reposicion' => 3,
+                'stock_maximo' => 6,
+                'activo' => true,
+                'codigos' => [['codigo' => '7790000000024', 'tipo' => 'ean13']],
+            ]);
+
             // Servicio (no lleva stock)
             $servicio->guardar(new Producto(['tipo' => Producto::TIPO_SERVICIO]), [
                 'nombre' => 'Flete local',
@@ -127,7 +151,15 @@ class DemoCatalogoSeeder extends Seeder
 
             $stock->cargarInicial($principal->id, [
                 ['producto_id' => $gaseosa->id, 'cantidad' => 60, 'costo_unitario' => 1200, 'ubicacion_id' => $a011],
-                ['producto_id' => $harina->id, 'cantidad' => 30, 'costo_unitario' => 650],
+                // Harina en tres lotes: uno vencido, uno por vencer y uno vigente (FEFO toma primero el que vence antes)
+                ['producto_id' => $harina->id, 'cantidad' => 3, 'costo_unitario' => 650,
+                    'lote_codigo' => 'H-2605', 'lote_vencimiento' => today()->subDays(5)->toDateString()],
+                ['producto_id' => $harina->id, 'cantidad' => 10, 'costo_unitario' => 650,
+                    'lote_codigo' => 'H-2608', 'lote_vencimiento' => today()->addDays(10)->toDateString()],
+                ['producto_id' => $harina->id, 'cantidad' => 17, 'costo_unitario' => 650,
+                    'lote_codigo' => 'H-2611', 'lote_vencimiento' => today()->addDays(120)->toDateString()],
+                ['producto_id' => $taladro->id, 'cantidad' => 3, 'costo_unitario' => 45000,
+                    'series' => ['TAL-0001', 'TAL-0002', 'TAL-0003']],
                 ...$remera->variantes()->get()->map(fn ($v) => [
                     'producto_id' => $v->id, 'cantidad' => 10, 'costo_unitario' => 5000,
                 ])->all(),
@@ -152,6 +184,23 @@ class DemoCatalogoSeeder extends Seeder
                 'motivo_id' => Motivo::where('tipo', 'egreso')->where('nombre', 'Rotura')->value('id'),
                 'observaciones' => 'Se cayó del estante (ejemplo)',
             ]);
+
+            // Venta de un taladro: sale con su número de serie
+            $stock->egresar($principal->id, [
+                ['producto_id' => $taladro->id, 'cantidad' => 1, 'series' => ['TAL-0002']],
+            ], [
+                'motivo_id' => Motivo::where('tipo', 'egreso')->where('nombre', 'Venta')->value('id'),
+                'observaciones' => 'Venta con garantía (ejemplo)',
+            ]);
+
+            // Abastecimiento: proveedores, qué se les compra y una orden enviada esperando mercadería
+            $this->compras($gaseosa, $harina, $taladro, $principal);
+
+            // Una transferencia en camino a la sucursal (para probar la recepción con operador@demo.com)
+            app(TransferenciaService::class)->enviar($principal->id, $sucursal->id, [
+                ['producto_id' => $gaseosa->id, 'cantidad' => 12, 'ubicacion_id' => $a011],
+                ['producto_id' => $harina->id, 'cantidad' => 5],
+            ], ['transportista' => 'Juan (camioneta)', 'observaciones' => 'Reposición semanal (ejemplo)']);
         });
     }
 
@@ -187,5 +236,63 @@ class DemoCatalogoSeeder extends Seeder
             $operador->update(['todos_los_depositos' => false]);
             $operador->depositos()->sync([$sucursal->id]);
         }
+    }
+
+    protected function compras(Producto $gaseosa, Producto $harina, Producto $taladro, Deposito $principal): void
+    {
+        $admin = User::where('email', 'admin@demo.com')->first();
+        if (! $admin) {
+            return;
+        }
+
+        $distribuidora = Proveedor::create([
+            'razon_social' => 'Distribuidora Norte S.A.',
+            'nombre_fantasia' => 'Dist. Norte',
+            'cuit' => '30-70000001-6',
+            'contacto' => 'Laura (ventas)',
+            'email' => 'ventas@distnorte.example',
+            'telefono' => '11 4444-5555',
+            'condiciones_pago' => '30 días fecha factura',
+            'plazo_entrega_dias' => 3,
+            'activo' => true,
+        ]);
+
+        $herramientas = Proveedor::create([
+            'razon_social' => 'Herramientas del Sur S.R.L.',
+            'cuit' => '30-71111111-1',
+            'email' => 'pedidos@herrsur.example',
+            'condiciones_pago' => 'Contado',
+            'plazo_entrega_dias' => 7,
+            'activo' => true,
+        ]);
+
+        // La gaseosa se compra por pack de 6 y la harina por bolsa de 25 kg
+        ProductoProveedor::create([
+            'producto_id' => $gaseosa->id, 'proveedor_id' => $distribuidora->id, 'codigo_proveedor' => 'BUR-225',
+            'presentacion_id' => $gaseosa->presentaciones()->value('id'), 'costo' => 1200, 'es_principal' => true,
+        ]);
+        ProductoProveedor::create([
+            'producto_id' => $harina->id, 'proveedor_id' => $distribuidora->id, 'codigo_proveedor' => 'MS-000',
+            'presentacion_id' => $harina->presentaciones()->value('id'), 'costo' => 640, 'es_principal' => true,
+        ]);
+        ProductoProveedor::create([
+            'producto_id' => $taladro->id, 'proveedor_id' => $herramientas->id, 'codigo_proveedor' => 'TP-650',
+            'costo' => 45000, 'minimo_compra' => 2, 'es_principal' => true,
+        ]);
+
+        $compras = app(CompraService::class);
+
+        $orden = $compras->guardarOrden(null, [
+            'proveedor_id' => $distribuidora->id,
+            'deposito_id' => $principal->id,
+            'fecha' => today()->subDays(2)->toDateString(),
+            'fecha_entrega' => today()->addDay()->toDateString(),
+            'observaciones' => 'Entregar por la mañana (ejemplo)',
+        ], [
+            ['producto_id' => $gaseosa->id, 'presentacion_id' => $gaseosa->presentaciones()->value('id'), 'cantidad' => 4, 'costo_unitario' => 7200],
+            ['producto_id' => $harina->id, 'presentacion_id' => $harina->presentaciones()->value('id'), 'cantidad' => 2, 'costo_unitario' => 16000],
+        ], $admin);
+
+        $compras->enviar($orden);
     }
 }

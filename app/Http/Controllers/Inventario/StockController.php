@@ -104,7 +104,7 @@ class StockController extends Controller
         $hasta = $this->fecha($request->query('hasta'));
 
         $items = MovimientoItem::query()
-            ->with(['movimiento.usuario', 'movimiento.motivo', 'deposito', 'ubicacion', 'presentacion'])
+            ->with(['movimiento.usuario', 'movimiento.motivo', 'deposito', 'ubicacion', 'presentacion', 'lote'])
             ->where('producto_id', $producto->id)
             ->whereIn('deposito_id', $ids)
             ->when($desde, fn ($q) => $q->where('fecha', '>=', $desde->copy()->startOfDay()))
@@ -115,12 +115,12 @@ class StockController extends Controller
 
         // Stock actual por depósito y ubicación
         $existencias = Existencia::query()
-            ->with(['deposito', 'ubicacion'])
+            ->with(['deposito', 'ubicacion', 'lote'])
             ->where('producto_id', $producto->id)
             ->whereIn('deposito_id', $depositos->pluck('id'))
             ->where('cantidad', '!=', 0)
             ->get()
-            ->sortBy(fn ($e) => [$e->deposito?->nombre, $e->ubicacion?->codigo ?? ''])
+            ->sortBy(fn ($e) => [$e->deposito?->nombre, $e->lote?->fecha_vencimiento?->toDateString() ?? '9999', $e->ubicacion?->codigo ?? ''])
             ->groupBy('deposito_id');
 
         return view('inventario.kardex', [

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EmpresaActiva;
+use App\Http\Middleware\TieneModulo;
 use App\Http\Middleware\TieneRol;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -16,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'rol' => TieneRol::class,
             'empresa.activa' => EmpresaActiva::class,
+            'modulo' => TieneModulo::class,
         ]);
 
         $middleware->redirectGuestsTo(fn () => route('login'));

@@ -2,6 +2,10 @@
 
 use App\Http\Controllers\Admin\EmpresaAdminController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Compras\OrdenCompraController;
+use App\Http\Controllers\Compras\ProveedorController;
+use App\Http\Controllers\Compras\RecepcionCompraController;
+use App\Http\Controllers\Compras\ReposicionController;
 use App\Http\Controllers\Catalogo\CategoriaController;
 use App\Http\Controllers\Catalogo\MarcaController;
 use App\Http\Controllers\Catalogo\ProductoController;
@@ -13,8 +17,11 @@ use App\Http\Controllers\Configuracion\UsuarioController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Inventario\DepositoController;
 use App\Http\Controllers\Inventario\MovimientoController;
+use App\Http\Controllers\Inventario\SerieController;
 use App\Http\Controllers\Inventario\StockController;
+use App\Http\Controllers\Inventario\TransferenciaController;
 use App\Http\Controllers\Inventario\UbicacionController;
+use App\Http\Controllers\Inventario\VencimientoController;
 use Illuminate\Support\Facades\Route;
 
 /* ---------- Invitados ---------- */
@@ -34,6 +41,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/empresas', [EmpresaAdminController::class, 'store'])->name('empresas.store');
         Route::post('/empresas/salir', [EmpresaAdminController::class, 'salir'])->name('empresas.salir');
         Route::post('/empresas/{empresa}/entrar', [EmpresaAdminController::class, 'entrar'])->name('empresas.entrar');
+        Route::patch('/empresas/{empresa}/modulos', [EmpresaAdminController::class, 'modulos'])->name('empresas.modulos');
     });
 
     /* ----- Dentro de una empresa ----- */
@@ -52,6 +60,9 @@ Route::middleware('auth')->group(function () {
 
             Route::get('/stock', [StockController::class, 'index'])->name('stock.index');
             Route::get('/kardex/{producto}', [StockController::class, 'kardex'])->name('kardex');
+            Route::get('/vencimientos', [VencimientoController::class, 'index'])->name('vencimientos.index');
+            Route::get('/series', [SerieController::class, 'index'])->name('series.index');
+            Route::get('/series/{serie}', [SerieController::class, 'show'])->name('series.show');
 
             Route::get('/movimientos', [MovimientoController::class, 'index'])->name('movimientos.index');
             Route::get('/movimientos/{movimiento}', [MovimientoController::class, 'show'])->whereNumber('movimiento')->name('movimientos.show');
@@ -66,6 +77,59 @@ Route::middleware('auth')->group(function () {
 
             Route::post('/movimientos/{movimiento}/anular', [MovimientoController::class, 'anular'])
                 ->middleware('rol:admin,encargado')->whereNumber('movimiento')->name('movimientos.anular');
+
+            /* Transferencias: las ven y operan los usuarios de los depósitos de origen o destino */
+            Route::get('/transferencias', [TransferenciaController::class, 'index'])->name('transferencias.index');
+            Route::get('/transferencias/{transferencia}', [TransferenciaController::class, 'show'])->whereNumber('transferencia')->name('transferencias.show');
+
+            Route::middleware('rol:admin,encargado,operador')->group(function () {
+                Route::get('/transferencias/nueva', [TransferenciaController::class, 'create'])->name('transferencias.create');
+                Route::post('/transferencias', [TransferenciaController::class, 'store'])->name('transferencias.store');
+                Route::get('/transferencias/{transferencia}/recibir', [TransferenciaController::class, 'recepcion'])->whereNumber('transferencia')->name('transferencias.recepcion');
+                Route::post('/transferencias/{transferencia}/recibir', [TransferenciaController::class, 'recibir'])->whereNumber('transferencia')->name('transferencias.recibir');
+            });
+
+            Route::post('/transferencias/{transferencia}/anular', [TransferenciaController::class, 'anular'])
+                ->middleware('rol:admin,encargado')->whereNumber('transferencia')->name('transferencias.anular');
+        });
+
+        /* Abastecimiento (módulo que se habilita por plan) */
+        Route::middleware('modulo:compras')->prefix('compras')->name('compras.')->group(function () {
+
+            // Consulta de órdenes y recepción: también el operador del depósito
+            Route::middleware('rol:admin,encargado,operador')->group(function () {
+                Route::get('/ordenes', [OrdenCompraController::class, 'index'])->name('ordenes.index');
+                Route::get('/ordenes/{orden}', [OrdenCompraController::class, 'show'])->whereNumber('orden')->name('ordenes.show');
+                Route::get('/ordenes/{orden}/recibir', [RecepcionCompraController::class, 'create'])->whereNumber('orden')->name('recepciones.create');
+                Route::post('/ordenes/{orden}/recibir', [RecepcionCompraController::class, 'store'])->whereNumber('orden')->name('recepciones.store');
+                Route::get('/recepciones', [RecepcionCompraController::class, 'index'])->name('recepciones.index');
+                Route::get('/recepciones/{recepcion}', [RecepcionCompraController::class, 'show'])->whereNumber('recepcion')->name('recepciones.show');
+            });
+
+            Route::middleware('rol:admin,encargado')->group(function () {
+                Route::get('/reposicion', [ReposicionController::class, 'index'])->name('reposicion.index');
+                Route::post('/reposicion', [ReposicionController::class, 'generar'])->name('reposicion.generar');
+
+                Route::get('/productos/buscar', [OrdenCompraController::class, 'buscarProducto'])->name('productos.buscar');
+                Route::get('/ordenes/nueva', [OrdenCompraController::class, 'create'])->name('ordenes.create');
+                Route::post('/ordenes', [OrdenCompraController::class, 'store'])->name('ordenes.store');
+                Route::get('/ordenes/{orden}/editar', [OrdenCompraController::class, 'edit'])->whereNumber('orden')->name('ordenes.edit');
+                Route::put('/ordenes/{orden}', [OrdenCompraController::class, 'update'])->whereNumber('orden')->name('ordenes.update');
+                Route::post('/ordenes/{orden}/enviar', [OrdenCompraController::class, 'enviar'])->whereNumber('orden')->name('ordenes.enviar');
+                Route::post('/ordenes/{orden}/cancelar', [OrdenCompraController::class, 'cancelar'])->whereNumber('orden')->name('ordenes.cancelar');
+                Route::post('/ordenes/{orden}/cerrar', [OrdenCompraController::class, 'cerrar'])->whereNumber('orden')->name('ordenes.cerrar');
+                Route::post('/recepciones/{recepcion}/anular', [RecepcionCompraController::class, 'anular'])->whereNumber('recepcion')->name('recepciones.anular');
+
+                Route::get('/proveedores', [ProveedorController::class, 'index'])->name('proveedores.index');
+                Route::get('/proveedores/nuevo', [ProveedorController::class, 'create'])->name('proveedores.create');
+                Route::post('/proveedores', [ProveedorController::class, 'store'])->name('proveedores.store');
+                Route::get('/proveedores/{proveedor}', [ProveedorController::class, 'show'])->whereNumber('proveedor')->name('proveedores.show');
+                Route::get('/proveedores/{proveedor}/editar', [ProveedorController::class, 'edit'])->whereNumber('proveedor')->name('proveedores.edit');
+                Route::put('/proveedores/{proveedor}', [ProveedorController::class, 'update'])->whereNumber('proveedor')->name('proveedores.update');
+                Route::delete('/proveedores/{proveedor}', [ProveedorController::class, 'destroy'])->whereNumber('proveedor')->name('proveedores.destroy');
+                Route::post('/proveedores/{proveedor}/productos', [ProveedorController::class, 'guardarProducto'])->whereNumber('proveedor')->name('proveedores.productos.store');
+                Route::delete('/proveedores/{proveedor}/productos/{vinculo}', [ProveedorController::class, 'quitarProducto'])->whereNumber('proveedor')->name('proveedores.productos.destroy');
+            });
         });
 
         /* Depósitos y ubicaciones */

@@ -73,6 +73,7 @@
                     <th>CUIT</th>
                     <th class="text-center">Usuarios</th>
                     <th>Suscripción</th>
+                    <th>Módulos</th>
                     <th class="text-end">Acción</th>
                 </tr>
                 </thead>
@@ -97,6 +98,19 @@
                                 <div class="small text-muted">hasta {{ $e->vence_el->format('d/m/Y') }}</div>
                             @endif
                         </td>
+                        <td>
+                            <form method="POST" action="{{ route('admin.empresas.modulos', $e) }}" class="small">
+                                @csrf
+                                @method('PATCH')
+                                @foreach ($modulos as $clave => $descripcion)
+                                    <div class="form-check form-switch mb-0" title="{{ $descripcion }}">
+                                        <input class="form-check-input" type="checkbox" role="switch" name="modulos[{{ $clave }}]" value="1"
+                                               id="mod{{ $e->id }}{{ $clave }}" @checked($e->tieneModulo($clave)) onchange="this.form.submit()">
+                                        <label class="form-check-label" for="mod{{ $e->id }}{{ $clave }}">{{ ucfirst($clave) }}</label>
+                                    </div>
+                                @endforeach
+                            </form>
+                        </td>
                         <td class="text-end">
                             @if ($actualId === $e->id)
                                 <span class="badge text-bg-warning">Operando</span>
@@ -109,7 +123,7 @@
                         </td>
                     </tr>
                 @empty
-                    <tr><td colspan="5" class="text-center text-muted py-4">Todavía no hay empresas.</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted py-4">Todavía no hay empresas.</td></tr>
                 @endforelse
                 </tbody>
             </table>

@@ -65,10 +65,47 @@
                     <a class="nav-link {{ request()->routeIs('inventario.movimientos.*') ? 'active' : '' }}" href="{{ route('inventario.movimientos.index') }}">
                         <i class="bi bi-arrow-left-right"></i> Movimientos
                     </a>
+                    @if ($empresaActual->usa_lotes)
+                        <a class="nav-link {{ request()->routeIs('inventario.vencimientos.*') ? 'active' : '' }}" href="{{ route('inventario.vencimientos.index') }}">
+                            <i class="bi bi-calendar-x"></i> Vencimientos
+                        </a>
+                    @endif
+                    @if ($empresaActual->usa_series)
+                        <a class="nav-link {{ request()->routeIs('inventario.series.*') ? 'active' : '' }}" href="{{ route('inventario.series.index') }}">
+                            <i class="bi bi-upc"></i> Números de serie
+                        </a>
+                    @endif
+                    @php($transferenciasPendientes = \App\Models\Transferencia::pendientesPara($usuario)->count())
+                    <a class="nav-link {{ request()->routeIs('inventario.transferencias.*') ? 'active' : '' }}" href="{{ route('inventario.transferencias.index') }}">
+                        <i class="bi bi-truck"></i> Transferencias
+                        @if ($transferenciasPendientes)
+                            <span class="badge rounded-pill text-bg-warning ms-auto">{{ $transferenciasPendientes }}</span>
+                        @endif
+                    </a>
                     @if ($usuario->tieneRol('admin', 'encargado'))
                         <a class="nav-link {{ request()->routeIs('inventario.depositos.*', 'inventario.ubicaciones.*') ? 'active' : '' }}" href="{{ route('inventario.depositos.index') }}">
                             <i class="bi bi-buildings"></i> Depósitos
                         </a>
+                    @endif
+
+                    @if ($empresaActual->tieneModulo('compras') && $usuario->tieneRol('admin', 'encargado', 'operador'))
+                        <div class="seccion">Abastecimiento</div>
+                        @if ($usuario->tieneRol('admin', 'encargado'))
+                            <a class="nav-link {{ request()->routeIs('compras.reposicion.*') ? 'active' : '' }}" href="{{ route('compras.reposicion.index') }}">
+                                <i class="bi bi-cart-plus"></i> Reposición
+                            </a>
+                        @endif
+                        <a class="nav-link {{ request()->routeIs('compras.ordenes.*') ? 'active' : '' }}" href="{{ route('compras.ordenes.index') }}">
+                            <i class="bi bi-receipt"></i> Órdenes de compra
+                        </a>
+                        <a class="nav-link {{ request()->routeIs('compras.recepciones.*') ? 'active' : '' }}" href="{{ route('compras.recepciones.index') }}">
+                            <i class="bi bi-box-arrow-in-down"></i> Recepciones
+                        </a>
+                        @if ($usuario->tieneRol('admin', 'encargado'))
+                            <a class="nav-link {{ request()->routeIs('compras.proveedores.*') ? 'active' : '' }}" href="{{ route('compras.proveedores.index') }}">
+                                <i class="bi bi-person-vcard"></i> Proveedores
+                            </a>
+                        @endif
                     @endif
 
                     @if ($usuario->tieneRol('admin', 'encargado'))

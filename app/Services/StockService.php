@@ -6,20 +6,24 @@ use App\Events\StockActualizado;
 use App\Models\Deposito;
 use App\Models\Empresa;
 use App\Models\Existencia;
+use App\Models\Lote;
 use App\Models\Movimiento;
 use App\Models\Numerador;
 use App\Models\Producto;
+use App\Models\Serie;
 use App\Models\Ubicacion;
 use App\Models\User;
 use App\Support\EmpresaActual;
 use App\Support\Formato;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 /**
- * Motor de stock. Es el ÚNICO lugar del sistema que modifica existencias.
+ * Motor de stock. Es el ÚNICO lugar del sistema que modifica existencias, lotes y series.
  *
  * Garantías:
  * - Todo o nada: cada movimiento corre en una transacción.
@@ -27,10 +31,14 @@ use RuntimeException;
  *   así dos operaciones simultáneas sobre el mismo producto se ejecutan una detrás de otra.
  * - Sin duplicados: si llega dos veces la misma referencia_externa, devuelve el movimiento ya registrado.
  * - Kardex con saldo por depósito y costo promedio ponderado actualizado.
+ * - Lotes: las entradas exigen lote; las salidas sin lote toman primero lo que vence antes (FEFO)
+ *   y no descuentan solos los lotes vencidos.
+ * - Series: cada unidad con número de serie se sigue de punta a punta (en qué depósito está y por dónde pasó).
  *
  * Formato de cada línea:
  *   producto_id, cantidad (con signo en registrar/ajustar; positiva en ingresar/egresar),
- *   deposito_id?, ubicacion_id?, lote_id?, costo_unitario?, presentacion_id?, cantidad_presentacion?
+ *   deposito_id?, ubicacion_id?, costo_unitario?, presentacion_id?, cantidad_presentacion?,
+ *   lote_id? | lote_codigo? + lote_vencimiento? (Y-m-d), series? (array o texto, uno por línea)
  */
 class StockService
 {
@@ -63,9 +71,9 @@ class StockService
 
     /**
      * Ajuste por conteo: cada línea trae "contado" (lo que hay físicamente).
-     * La diferencia contra el sistema se calcula con el producto bloqueado, así no se pisa con otra operación.
-     * Con ubicacion_id compara contra esa ubicación; sin ubicación, contra el total del depósito.
-     * Las líneas sin diferencia no se registran.
+     * La diferencia contra el sistema se calcula con el producto bloqueado.
+     * Compara contra la ubicación y/o el lote indicados; sin ninguno, contra el total del depósito.
+     * Las líneas sin diferencia no se registran. No aplica a productos con número de serie.
      */
     public function ajustarAContado(int $depositoId, array $lineas, array $opciones = [], ?User $usuario = null): Movimiento
     {
@@ -80,8 +88,9 @@ class StockService
     }
 
     /**
-     * Transferencia directa entre depósitos (sale de uno y entra en el otro en el mismo movimiento).
-     * Cada línea admite ubicacion_id (origen) y ubicacion_destino_id.
+     * Transferencia directa entre depósitos en un solo movimiento.
+     * Lo que entra en destino es exactamente lo que salió del origen (mismos lotes y series).
+     * Cada línea admite ubicacion_id (origen), ubicacion_destino_id, lote_id y series.
      */
     public function transferir(int $origenId, int $destinoId, array $lineas, array $opciones = [], ?User $usuario = null): Movimiento
     {
@@ -91,36 +100,56 @@ class StockService
             ]);
         }
 
-        $renglones = [];
-
-        foreach ($lineas as $linea) {
-            $cantidad = abs((float) ($linea['cantidad'] ?? 0));
-            $base = [
-                'producto_id' => $linea['producto_id'] ?? null,
-                'lote_id' => $linea['lote_id'] ?? null,
-            ];
-
-            $renglones[] = $base + ['deposito_id' => $origenId, 'ubicacion_id' => $linea['ubicacion_id'] ?? null, 'cantidad' => -$cantidad];
-            $renglones[] = $base + ['deposito_id' => $destinoId, 'ubicacion_id' => $linea['ubicacion_destino_id'] ?? null, 'cantidad' => $cantidad];
-        }
-
         return $this->registrar(
             Movimiento::TIPO_TRANSFERENCIA,
             $origenId,
-            $renglones,
+            $this->renglonesEspejo($lineas, $origenId, $destinoId),
             ['deposito_destino_id' => $destinoId] + $opciones,
             $usuario
         );
     }
 
     /**
+     * Arma pares de renglones: salida del origen + entrada "espejo" en el destino.
+     * La usan transferir() y TransferenciaService.
+     */
+    public function renglonesEspejo(array $lineas, int $origenId, int $destinoId): array
+    {
+        $renglones = [];
+
+        foreach (array_values($lineas) as $linea) {
+            $cantidad = abs((float) ($linea['cantidad'] ?? 0));
+
+            $renglones[] = [
+                'producto_id' => $linea['producto_id'] ?? null,
+                'deposito_id' => $origenId,
+                'ubicacion_id' => $linea['ubicacion_id'] ?? null,
+                'lote_id' => $linea['lote_id'] ?? null,
+                'series' => $linea['series'] ?? null,
+                'cantidad' => -$cantidad,
+            ];
+
+            $renglones[] = [
+                'producto_id' => $linea['producto_id'] ?? null,
+                'deposito_id' => $destinoId,
+                'ubicacion_id' => $linea['ubicacion_destino_id'] ?? null,
+                'cantidad' => $cantidad,
+                'espejo_de' => count($renglones) - 1,
+            ];
+        }
+
+        return $renglones;
+    }
+
+    /**
      * Anula un movimiento generando el contramovimiento (nunca se borra nada).
      * Si el stock que entró ya se consumió y el depósito no permite negativo, no deja anular.
      */
-    public function anular(Movimiento $movimiento, ?User $usuario = null, ?string $motivo = null): Movimiento
+    public function anular(Movimiento $movimiento, ?User $usuario = null, ?string $motivo = null, array $opciones = []): Movimiento
     {
-        return DB::transaction(function () use ($movimiento, $usuario, $motivo) {
+        return DB::transaction(function () use ($movimiento, $usuario, $motivo, $opciones) {
             $original = Movimiento::query()->whereKey($movimiento->id)->lockForUpdate()->firstOrFail();
+            $interno = (bool) ($opciones['interno_transferencia'] ?? false);
 
             if (! $original->puedeAnularse()) {
                 throw ValidationException::withMessages([
@@ -128,15 +157,31 @@ class StockService
                 ]);
             }
 
-            $lineas = $original->items()->get()->map(fn ($item) => [
-                'producto_id' => $item->producto_id,
-                'deposito_id' => $item->deposito_id,
-                'ubicacion_id' => $item->ubicacion_id,
-                'lote_id' => $item->lote_id,
-                'cantidad' => -(float) $item->cantidad,
-                'costo_unitario' => (float) $item->costo_unitario,
-                'exacta' => true,
-            ])->all();
+            if ($original->transferencia_id && ! $interno) {
+                throw ValidationException::withMessages([
+                    'movimiento' => 'Este movimiento es parte de una transferencia: se anula desde Transferencias.',
+                ]);
+            }
+
+            if ($original->recepcion_compra_id && empty($opciones['interno_compra'])) {
+                throw ValidationException::withMessages([
+                    'movimiento' => 'Este movimiento es una recepción de compra: se anula desde Compras.',
+                ]);
+            }
+
+            // Primero se revierten las entradas (así las series vuelven a estar libres) y después las salidas
+            $lineas = $original->items()->with('series')->get()
+                ->sortBy(fn ($item) => (float) $item->cantidad > 0 ? 0 : 1)
+                ->map(fn ($item) => [
+                    'producto_id' => $item->producto_id,
+                    'deposito_id' => $item->deposito_id,
+                    'ubicacion_id' => $item->ubicacion_id,
+                    'lote_id' => $item->lote_id,
+                    'series' => $item->series->isNotEmpty() ? $item->series->pluck('numero')->all() : null,
+                    'cantidad' => -(float) $item->cantidad,
+                    'costo_unitario' => (float) $item->costo_unitario,
+                    'exacta' => true,
+                ])->values()->all();
 
             $motivo = filled($motivo) ? trim($motivo) : null;
 
@@ -146,6 +191,9 @@ class StockService
                 'origen' => $usuario ? 'manual' : 'sistema',
                 'observaciones' => trim("Anulación del movimiento N° {$original->numero_texto}. " . ($motivo ?? '')),
                 'revertir_costo' => $original->tipo !== Movimiento::TIPO_TRANSFERENCIA,
+                'transferencia_id' => $original->transferencia_id,
+                'recepcion_compra_id' => $original->recepcion_compra_id,
+                'interno_transferencia' => $interno,
             ], $usuario);
 
             $original->update([
@@ -173,8 +221,12 @@ class StockService
     }
 
     /**
-     * Stock de varios productos en un depósito, total y por ubicación (0 = sin ubicar):
-     * [producto_id => ['total' => 12.0, 'ubicaciones' => [0 => 2.0, 15 => 10.0]]]
+     * Stock de varios productos en un depósito: total, por ubicación (0 = sin ubicar) y por lote.
+     * [producto_id => [
+     *     'total' => 12.0,
+     *     'ubicaciones' => [0 => 2.0, 15 => 10.0],
+     *     'lotes' => [8 => ['id' => 8, 'codigo' => 'L-24', 'vencimiento' => '2026-12-01', 'vencido' => false, 'cantidad' => 12.0]],
+     * ]]
      */
     public function resumen(array $productoIds, int $depositoId): array
     {
@@ -182,19 +234,45 @@ class StockService
             return [];
         }
 
-        $resultado = [];
-
-        Existencia::query()
+        $filas = Existencia::query()
             ->whereIn('producto_id', $productoIds)
             ->where('deposito_id', $depositoId)
-            ->selectRaw('producto_id, ubicacion_id, SUM(cantidad) AS total')
-            ->groupBy('producto_id', 'ubicacion_id')
-            ->get()
-            ->each(function ($fila) use (&$resultado) {
-                $id = $fila->producto_id;
-                $resultado[$id]['total'] = round(($resultado[$id]['total'] ?? 0) + (float) $fila->total, 4);
-                $resultado[$id]['ubicaciones'][(int) ($fila->ubicacion_id ?? 0)] = (float) $fila->total;
-            });
+            ->selectRaw('producto_id, ubicacion_id, lote_id, SUM(cantidad) AS total')
+            ->groupBy('producto_id', 'ubicacion_id', 'lote_id')
+            ->get();
+
+        $lotes = Lote::whereIn('id', $filas->pluck('lote_id')->filter()->unique())->get()->keyBy('id');
+        $resultado = [];
+
+        foreach ($filas as $fila) {
+            $id = $fila->producto_id;
+            $total = (float) $fila->total;
+            $ubicacion = (int) ($fila->ubicacion_id ?? 0);
+
+            $resultado[$id]['total'] = round(($resultado[$id]['total'] ?? 0) + $total, 4);
+            $resultado[$id]['ubicaciones'][$ubicacion] = round(($resultado[$id]['ubicaciones'][$ubicacion] ?? 0) + $total, 4);
+            $resultado[$id]['lotes'] ??= [];
+
+            if ($fila->lote_id && ($lote = $lotes->get($fila->lote_id))) {
+                $actual = $resultado[$id]['lotes'][$lote->id]['cantidad'] ?? 0;
+                $resultado[$id]['lotes'][$lote->id] = [
+                    'id' => $lote->id,
+                    'codigo' => $lote->codigo,
+                    'vencimiento' => $lote->fecha_vencimiento?->toDateString(),
+                    'vencido' => $lote->estaVencido(),
+                    'cantidad' => round($actual + $total, 4),
+                ];
+            }
+        }
+
+        // Los lotes, ordenados por vencimiento y sin los que quedaron en cero
+        foreach ($resultado as $id => $datos) {
+            $resultado[$id]['lotes'] = collect($datos['lotes'])
+                ->filter(fn ($l) => abs($l['cantidad']) > self::TOLERANCIA)
+                ->sortBy(fn ($l) => [$l['vencimiento'] === null ? 1 : 0, $l['vencimiento'] ?? '', $l['codigo']])
+                ->values()
+                ->all();
+        }
 
         return $resultado;
     }
@@ -210,7 +288,8 @@ class StockService
 
     /**
      * Opciones: origen, motivo_id, referencia_externa, comprobante, fecha_comprobante, observaciones,
-     *           deposito_destino_id, anula_a_id, revertir_costo (uso interno de anular)
+     *           deposito_destino_id, anula_a_id, transferencia_id, recepcion_compra_id,
+     *           revertir_costo / interno_transferencia (uso interno de anular y de TransferenciaService)
      */
     public function registrar(string $tipo, int $depositoId, array $lineas, array $opciones = [], ?User $usuario = null): Movimiento
     {
@@ -227,7 +306,8 @@ class StockService
         }
 
         $esAnulacion = $tipo === Movimiento::TIPO_ANULACION;
-        $lineas = $this->normalizar($lineas, $depositoId, $empresa, $usuario, $esAnulacion);
+        $interno = (bool) ($opciones['interno_transferencia'] ?? false);
+        $lineas = $this->normalizar($lineas, $depositoId, $empresa, $usuario, $esAnulacion, $interno);
 
         try {
             return DB::transaction(fn () => $this->aplicar($tipo, $depositoId, $lineas, $opciones, $usuario, $referencia));
@@ -273,23 +353,32 @@ class StockService
             });
 
         $revertirCosto = (bool) ($opciones['revertir_costo'] ?? false);
+        $excluirVencidos = in_array($tipo, [Movimiento::TIPO_EGRESO, Movimiento::TIPO_TRANSFERENCIA], true);
         $fecha = now();
         $errores = [];
         $items = [];
+        $aplicadas = []; // índice de línea => partes aplicadas (para los renglones espejo)
 
         // 3) Aplicar cada línea
-        foreach ($lineas as $linea) {
+        foreach ($lineas as $i => $linea) {
             $producto = $productos->get($linea['producto_id']);
             $deposito = $depositos->get($linea['deposito_id']);
             $clave = "{$producto->id}-{$deposito->id}";
             $saldoAntes = $saldoDeposito[$clave] ?? 0.0;
+            $aplicadas[$i] = [];
+
+            // Lote nuevo (se crea recién acá, dentro de la transacción)
+            if ($linea['lote_nuevo']) {
+                $lote = Lote::firstOrCreate(
+                    ['producto_id' => $producto->id, 'codigo' => $linea['lote_nuevo']['codigo']],
+                    ['fecha_vencimiento' => $linea['lote_nuevo']['vencimiento']]
+                );
+                $linea['lote_id'] = $lote->id;
+            }
 
             // Ajuste por conteo: la cantidad es la diferencia entre lo contado y lo que dice el sistema
             if ($linea['contado'] !== null) {
-                $enSistema = ($linea['ubicacion_id'] || $linea['lote_id'])
-                    ? (float) (Existencia::where('clave', Existencia::clave($producto->id, $deposito->id, $linea['ubicacion_id'], $linea['lote_id']))->value('cantidad') ?? 0)
-                    : $saldoAntes;
-
+                $enSistema = $this->saldoFiltrado($producto->id, $deposito->id, $linea['ubicacion_id'], $linea['lote_id'], $saldoAntes);
                 $linea['cantidad'] = round($linea['contado'] - $enSistema, 4);
 
                 if (abs($linea['cantidad']) < self::TOLERANCIA) {
@@ -297,13 +386,33 @@ class StockService
                 }
             }
 
-            foreach ($this->partes($linea, $producto, $deposito) as $parte) {
+            // Toda entrada de un producto con lotes tiene que decir de qué lote es
+            if ($producto->usa_lotes && $linea['cantidad'] > 0 && ! $linea['lote_id'] && $linea['espejo_de'] === null && ! $linea['exacta']) {
+                $errores[] = "{$producto->nombre}: indicá el lote" . ($linea['contado'] !== null ? ' del sobrante.' : '.');
+                continue;
+            }
+
+            $partes = $this->partes($linea, $producto, $deposito, $excluirVencidos, $aplicadas, $errores);
+
+            if ($partes === null) {
+                continue;
+            }
+
+            foreach ($partes as $parte) {
                 $existencia = Existencia::para($producto->id, $deposito->id, $parte['ubicacion_id'], $parte['lote_id']);
                 $actual = (float) $existencia->cantidad;
                 $nueva = round($actual + $parte['cantidad'], 4);
 
                 if ($parte['cantidad'] < 0 && $nueva < -self::TOLERANCIA && ! $deposito->permiteStockNegativo()) {
-                    $errores[] = $this->mensajeInsuficiente($producto, $deposito, $linea, $parte, $actual, $saldoAntes);
+                    $errores[] = $this->mensajeInsuficiente($producto, $deposito, $linea, $parte, $actual, $saldoAntes, $excluirVencidos);
+                    continue;
+                }
+
+                $serieIds = $parte['series'] !== null
+                    ? $this->moverSeries($producto, $deposito, $parte, $errores)
+                    : [];
+
+                if ($serieIds === null) {
                     continue;
                 }
 
@@ -327,6 +436,8 @@ class StockService
                     $costo ??= $this->costoVigente($producto);
                 }
 
+                $aplicadas[$i][] = $parte;
+
                 $items[] = [
                     'producto_id' => $producto->id,
                     'deposito_id' => $deposito->id,
@@ -339,6 +450,7 @@ class StockService
                     'saldo' => $saldoDeposito[$clave],
                     'costo_unitario' => round($costo, 4),
                     'fecha' => $fecha,
+                    'series' => $serieIds,
                 ];
             }
         }
@@ -375,10 +487,16 @@ class StockService
             'observaciones' => $opciones['observaciones'] ?? null,
             'user_id' => $usuario?->id,
             'anula_a_id' => $opciones['anula_a_id'] ?? null,
+            'transferencia_id' => $opciones['transferencia_id'] ?? null,
+            'recepcion_compra_id' => $opciones['recepcion_compra_id'] ?? null,
         ]);
 
         foreach ($items as $item) {
-            $movimiento->items()->create($item);
+            $renglon = $movimiento->items()->create(Arr::except($item, ['series']));
+
+            if ($item['series']) {
+                $renglon->series()->attach($item['series']);
+            }
         }
 
         event(new StockActualizado($movimiento->empresa_id, $movimiento->id, $productoIds, $depositoIds));
@@ -387,31 +505,72 @@ class StockService
     }
 
     /**
-     * Divide una salida sin ubicación entre las ubicaciones que tienen stock:
-     * primero lo "sin ubicar", después el resto por orden de alta.
+     * En qué filas de existencia impacta una línea.
+     * Cada parte: ubicacion_id, lote_id, cantidad, series (números o null).
+     * Devuelve null si la línea tiene errores (ya agregados a $errores).
      */
-    protected function partes(array $linea, Producto $producto, Deposito $deposito): array
+    protected function partes(array $linea, Producto $producto, Deposito $deposito, bool $excluirVencidos, array $aplicadas, array &$errores): ?array
     {
+        // Renglón espejo: entra exactamente lo que salió en la línea de origen (mismos lotes y series)
+        if ($linea['espejo_de'] !== null) {
+            return array_map(fn ($origen) => [
+                'ubicacion_id' => $linea['ubicacion_id'],
+                'lote_id' => $origen['lote_id'],
+                'cantidad' => -$origen['cantidad'],
+                'series' => $origen['series'],
+            ], $aplicadas[$linea['espejo_de']] ?? []);
+        }
+
+        // Productos con número de serie: las series indicadas mandan
+        if ($linea['series'] !== null) {
+            if ($linea['cantidad'] > 0) {
+                return [[
+                    'ubicacion_id' => $linea['ubicacion_id'],
+                    'lote_id' => $linea['lote_id'],
+                    'cantidad' => $linea['cantidad'],
+                    'series' => $linea['series'],
+                ]];
+            }
+
+            return $this->partesPorSeries($linea, $producto, $deposito, $errores);
+        }
+
         $simple = [[
             'ubicacion_id' => $linea['ubicacion_id'],
             'lote_id' => $linea['lote_id'],
             'cantidad' => $linea['cantidad'],
+            'series' => null,
         ]];
 
-        if ($linea['cantidad'] > 0 || $linea['exacta'] || $linea['ubicacion_id'] || $linea['lote_id']) {
+        $estaDefinida = $linea['ubicacion_id'] && ($linea['lote_id'] || ! $producto->usa_lotes);
+
+        if ($linea['cantidad'] > 0 || $linea['exacta'] || $estaDefinida) {
             return $simple;
         }
 
+        // Salida a repartir: FEFO por lote (si usa lotes) y, dentro de eso, lo "sin ubicar" primero
+        $consulta = Existencia::query()
+            ->select('existencias.*')
+            ->where('existencias.producto_id', $producto->id)
+            ->where('existencias.deposito_id', $deposito->id)
+            ->where('existencias.cantidad', '>', 0)
+            ->when($linea['ubicacion_id'], fn ($q, $u) => $q->where('existencias.ubicacion_id', $u))
+            ->when($linea['lote_id'], fn ($q, $l) => $q->where('existencias.lote_id', $l));
+
+        if ($producto->usa_lotes) {
+            $consulta->leftJoin('lotes', 'lotes.id', '=', 'existencias.lote_id')
+                ->when($excluirVencidos && ! $linea['lote_id'], fn ($q) => $q->where(fn ($w) => $w
+                    ->whereNull('lotes.fecha_vencimiento')
+                    ->orWhere('lotes.fecha_vencimiento', '>=', today()->toDateString())))
+                ->orderByRaw('lotes.fecha_vencimiento IS NULL')
+                ->orderBy('lotes.fecha_vencimiento')
+                ->orderBy('existencias.lote_id');
+        }
+
+        $existencias = $consulta->orderByRaw('existencias.ubicacion_id IS NOT NULL')->orderBy('existencias.id')->get();
+
         $restante = -$linea['cantidad'];
         $partes = [];
-
-        $existencias = Existencia::query()
-            ->where('producto_id', $producto->id)
-            ->where('deposito_id', $deposito->id)
-            ->where('cantidad', '>', 0)
-            ->orderByRaw('ubicacion_id IS NOT NULL')
-            ->orderBy('id')
-            ->get();
 
         foreach ($existencias as $existencia) {
             if ($restante <= self::TOLERANCIA) {
@@ -423,22 +582,123 @@ class StockService
                 'ubicacion_id' => $existencia->ubicacion_id,
                 'lote_id' => $existencia->lote_id,
                 'cantidad' => -round($tomar, 4),
+                'series' => null,
             ];
             $restante = round($restante - $tomar, 4);
         }
 
-        // Lo que falte sale de "sin ubicar" (queda negativo si el depósito lo permite; si no, da error)
+        // Lo que falte sale de la fila indicada (queda negativo si el depósito lo permite; si no, da error)
         if ($restante > self::TOLERANCIA) {
-            $indice = collect($partes)->search(fn ($p) => $p['ubicacion_id'] === null && $p['lote_id'] === null);
+            $indice = collect($partes)->search(fn ($p) => $p['ubicacion_id'] === $linea['ubicacion_id'] && $p['lote_id'] === $linea['lote_id']);
 
             if ($indice !== false) {
                 $partes[$indice]['cantidad'] = round($partes[$indice]['cantidad'] - $restante, 4);
             } else {
-                $partes[] = ['ubicacion_id' => null, 'lote_id' => null, 'cantidad' => -$restante];
+                $partes[] = ['ubicacion_id' => $linea['ubicacion_id'], 'lote_id' => $linea['lote_id'], 'cantidad' => -$restante, 'series' => null];
             }
         }
 
         return $partes;
+    }
+
+    /** Salida de un producto con series: se agrupa según dónde está cada serie. */
+    protected function partesPorSeries(array $linea, Producto $producto, Deposito $deposito, array &$errores): ?array
+    {
+        $series = Serie::query()
+            ->where('producto_id', $producto->id)
+            ->whereIn('numero', $linea['series'])
+            ->get()
+            ->keyBy('numero');
+
+        $conError = false;
+        $grupos = [];
+
+        foreach ($linea['series'] as $numero) {
+            $serie = $series->get($numero);
+
+            $problema = match (true) {
+                ! $serie => 'no existe',
+                ! $serie->enStock() => 'ya salió del stock',
+                $serie->deposito_id !== $deposito->id => 'no está en ' . $deposito->nombre,
+                $linea['ubicacion_id'] && $serie->ubicacion_id !== $linea['ubicacion_id'] => 'no está en esa ubicación',
+                $linea['lote_id'] && $serie->lote_id !== $linea['lote_id'] => 'no es de ese lote',
+                default => null,
+            };
+
+            if ($problema) {
+                $errores[] = "{$producto->nombre}: la serie {$numero} {$problema}.";
+                $conError = true;
+                continue;
+            }
+
+            $clave = ($serie->ubicacion_id ?? 0) . '-' . ($serie->lote_id ?? 0);
+            $grupos[$clave] ??= ['ubicacion_id' => $serie->ubicacion_id, 'lote_id' => $serie->lote_id, 'cantidad' => 0, 'series' => []];
+            $grupos[$clave]['cantidad']--;
+            $grupos[$clave]['series'][] = $numero;
+        }
+
+        return $conError ? null : array_values($grupos);
+    }
+
+    /**
+     * Actualiza el estado de las series de una parte. Devuelve los IDs, o null si hubo errores.
+     */
+    protected function moverSeries(Producto $producto, Deposito $deposito, array $parte, array &$errores): ?array
+    {
+        $existentes = Serie::query()
+            ->where('producto_id', $producto->id)
+            ->whereIn('numero', $parte['series'])
+            ->get()
+            ->keyBy('numero');
+
+        $ids = [];
+        $conError = false;
+
+        foreach ($parte['series'] as $numero) {
+            $serie = $existentes->get($numero);
+
+            if ($parte['cantidad'] > 0) {
+                if ($serie && $serie->enStock()) {
+                    $errores[] = "{$producto->nombre}: la serie {$numero} ya está en stock"
+                        . ($serie->deposito_id ? ' en ' . ($serie->deposito?->nombre ?? 'otro depósito') : '') . '.';
+                    $conError = true;
+                    continue;
+                }
+
+                $serie ??= new Serie(['producto_id' => $producto->id, 'numero' => $numero]);
+                $serie->fill([
+                    'estado' => Serie::EN_STOCK,
+                    'deposito_id' => $deposito->id,
+                    'ubicacion_id' => $parte['ubicacion_id'],
+                    'lote_id' => $parte['lote_id'],
+                ])->save();
+            } else {
+                $serie->fill([
+                    'estado' => Serie::EGRESADO,
+                    'deposito_id' => null,
+                    'ubicacion_id' => null,
+                ])->save();
+            }
+
+            $ids[] = $serie->id;
+        }
+
+        return $conError ? null : $ids;
+    }
+
+    /** Saldo de un producto en un depósito, opcionalmente filtrado por ubicación y/o lote. */
+    protected function saldoFiltrado(int $productoId, int $depositoId, ?int $ubicacionId, ?int $loteId, float $saldoDeposito): float
+    {
+        if (! $ubicacionId && ! $loteId) {
+            return $saldoDeposito;
+        }
+
+        return (float) Existencia::query()
+            ->where('producto_id', $productoId)
+            ->where('deposito_id', $depositoId)
+            ->when($ubicacionId, fn ($q) => $q->where('ubicacion_id', $ubicacionId))
+            ->when($loteId, fn ($q) => $q->where('lote_id', $loteId))
+            ->sum('cantidad');
     }
 
     protected function recalcularPromedio(Producto $producto, float $stockPrevio, float $cantidad, float $costo): void
@@ -466,29 +726,33 @@ class StockService
         return $promedio > 0 ? $promedio : (float) $producto->costo;
     }
 
-    protected function mensajeInsuficiente(Producto $producto, Deposito $deposito, array $linea, array $parte, float $actual, float $saldoAntes): string
+    protected function mensajeInsuficiente(Producto $producto, Deposito $deposito, array $linea, array $parte, float $actual, float $saldoAntes, bool $excluirVencidos): string
     {
         $unidad = $producto->unidad?->abreviatura;
-        $pedido = Formato::cantidad(abs($linea['cantidad']));
 
         if ($linea['ubicacion_id'] || $linea['lote_id'] || $linea['exacta']) {
-            $donde = $parte['ubicacion_id']
-                ? 'ubicación ' . (Ubicacion::find($parte['ubicacion_id'])?->codigo ?? '?')
-                : 'sin ubicar';
+            $donde = collect([
+                $parte['ubicacion_id'] ? 'ubicación ' . (Ubicacion::find($parte['ubicacion_id'])?->codigo ?? '?') : 'sin ubicar',
+                $parte['lote_id'] ? 'lote ' . (Lote::find($parte['lote_id'])?->codigo ?? '?') : null,
+            ])->filter()->implode(', ');
 
             return "Stock insuficiente de {$producto->nombre} en {$deposito->nombre} ({$donde}): hay "
                 . Formato::cantidad($actual) . " {$unidad} y se necesitan " . Formato::cantidad(abs($parte['cantidad'])) . " {$unidad}.";
         }
 
+        $nota = $producto->usa_lotes && $excluirVencidos
+            ? ' Los lotes vencidos no se descuentan solos: si querés sacarlos, elegí el lote.'
+            : '';
+
         return "Stock insuficiente de {$producto->nombre} en {$deposito->nombre}: hay "
-            . Formato::cantidad($saldoAntes) . " {$unidad} y se necesitan {$pedido} {$unidad}.";
+            . Formato::cantidad($saldoAntes) . " {$unidad} y se necesitan " . Formato::cantidad(abs($linea['cantidad'])) . " {$unidad}.{$nota}";
     }
 
     /* =========================================================
        Validación de las líneas
        ========================================================= */
 
-    protected function normalizar(array $lineas, int $depositoId, Empresa $empresa, ?User $usuario, bool $esAnulacion): array
+    protected function normalizar(array $lineas, int $depositoId, Empresa $empresa, ?User $usuario, bool $esAnulacion, bool $interno = false): array
     {
         $decimales = (int) $empresa->decimales_cantidad;
         $lineas = array_values($lineas);
@@ -512,18 +776,31 @@ class StockService
             ->get()
             ->keyBy('id');
 
+        $lotes = Lote::query()
+            ->whereIn('id', collect($lineas)->pluck('lote_id')->filter()->map(fn ($id) => (int) $id)->unique())
+            ->get()
+            ->keyBy('id');
+
+        // El depósito "En tránsito" solo lo mueven las transferencias, y no depende de los permisos del usuario
         $permisos = [];
-        $puedeOperar = function (int $id) use ($usuario, &$permisos): bool {
-            return $usuario === null || ($permisos[$id] ??= $usuario->puedeOperarDeposito($id));
+        $puedeOperar = function (Deposito $deposito) use ($usuario, &$permisos, $interno): bool {
+            if ($deposito->es_transito) {
+                return $interno;
+            }
+
+            return $usuario === null || ($permisos[$deposito->id] ??= $usuario->puedeOperarDeposito($deposito->id));
         };
+        $sinPermiso = fn (Deposito $deposito) => $deposito->es_transito
+            ? 'El depósito "En tránsito" lo maneja el sistema: usá Transferencias.'
+            : "No tenés permiso para operar el depósito {$deposito->nombre}.";
 
         $errores = [];
 
         $cabecera = $depositos->get($depositoId);
         if (! $cabecera || (! $esAnulacion && ! $cabecera->activo)) {
             $errores[] = 'El depósito elegido no existe o está inactivo.';
-        } elseif (! $puedeOperar($depositoId)) {
-            $errores[] = "No tenés permiso para operar el depósito {$cabecera->nombre}.";
+        } elseif (! $puedeOperar($cabecera)) {
+            $errores[] = $sinPermiso($cabecera);
         }
 
         if (! $lineas) {
@@ -543,6 +820,13 @@ class StockService
 
             if (! $esAnulacion && ! $producto->manejaStock()) {
                 $errores[] = "{$producto->nombre}: no controla stock.";
+                continue;
+            }
+
+            $espejoDe = isset($linea['espejo_de']) ? (int) $linea['espejo_de'] : null;
+
+            if ($espejoDe !== null && ($espejoDe >= $i || ! isset($lineas[$espejoDe]))) {
+                $errores[] = "Renglón {$n}: referencia de transferencia inválida.";
                 continue;
             }
 
@@ -576,8 +860,8 @@ class StockService
                 continue;
             }
 
-            if (! $puedeOperar($deposito->id)) {
-                $errores[] = "No tenés permiso para operar el depósito {$deposito->nombre}.";
+            if (! $puedeOperar($deposito)) {
+                $errores[] = $sinPermiso($deposito);
                 continue;
             }
 
@@ -597,15 +881,80 @@ class StockService
                 }
             }
 
+            // ----- Lote
+            $loteId = null;
+            $loteNuevo = null;
+
+            if (! empty($linea['lote_id'])) {
+                $lote = $lotes->get((int) $linea['lote_id']);
+
+                if (! $lote || $lote->producto_id !== $producto->id) {
+                    $errores[] = "{$producto->nombre}: el lote elegido no corresponde al producto.";
+                    continue;
+                }
+
+                $loteId = $lote->id;
+            } elseif ($producto->usa_lotes && filled($linea['lote_codigo'] ?? null) && $espejoDe === null) {
+                $codigo = mb_strtoupper(trim((string) $linea['lote_codigo']));
+                $vencimiento = $this->fechaOpcional($linea['lote_vencimiento'] ?? null);
+
+                if (filled($linea['lote_vencimiento'] ?? null) && ! $vencimiento) {
+                    $errores[] = "{$producto->nombre}: la fecha de vencimiento del lote {$codigo} no es válida.";
+                    continue;
+                }
+
+                $lote = Lote::where('producto_id', $producto->id)->where('codigo', $codigo)->first();
+
+                if ($lote) {
+                    if ($vencimiento && $lote->fecha_vencimiento && ! $lote->fecha_vencimiento->isSameDay($vencimiento)) {
+                        $errores[] = "{$producto->nombre}: el lote {$codigo} ya existe con vencimiento " . $lote->fecha_vencimiento->format('d/m/Y') . '.';
+                        continue;
+                    }
+
+                    $loteId = $lote->id;
+                } elseif (! $esConteo && $cantidad < 0) {
+                    $errores[] = "{$producto->nombre}: el lote {$codigo} no existe.";
+                    continue;
+                } else {
+                    $loteNuevo = ['codigo' => $codigo, 'vencimiento' => $vencimiento?->toDateString()];
+                }
+            }
+
+            // ----- Series
+            $series = null;
+
+            if ($espejoDe === null && ! empty($linea['series'])) {
+                $series = Serie::parsear($linea['series']);
+            }
+
+            if ($producto->usa_series && $espejoDe === null && ! $esAnulacion) {
+                if ($esConteo) {
+                    $errores[] = "{$producto->nombre}: los productos con número de serie no se ajustan por conteo; usá un ajuste por diferencia indicando las series.";
+                    continue;
+                }
+
+                $unidades = (int) round(abs($cantidad));
+
+                if (count($series ?? []) !== $unidades) {
+                    $errores[] = "{$producto->nombre}: cargaste " . count($series ?? []) . " números de serie para {$unidades} unidades.";
+                    continue;
+                }
+            } elseif (! $producto->usa_series && ! $esAnulacion) {
+                $series = null; // un producto sin series ignora lo que venga
+            }
+
             $costo = $linea['costo_unitario'] ?? null;
 
-            $resultado[] = [
+            $resultado[$i] = [
                 'producto_id' => $producto->id,
                 'deposito_id' => $deposito->id,
                 'ubicacion_id' => $ubicacionId,
-                'lote_id' => ! empty($linea['lote_id']) ? (int) $linea['lote_id'] : null,
+                'lote_id' => $loteId,
+                'lote_nuevo' => $loteNuevo,
                 'cantidad' => $cantidad,
                 'contado' => $contado,
+                'series' => $series,
+                'espejo_de' => $espejoDe,
                 'costo_unitario' => ($costo === null || $costo === '') ? null : max(0.0, (float) $costo),
                 'presentacion_id' => ! empty($linea['presentacion_id']) ? (int) $linea['presentacion_id'] : null,
                 'cantidad_presentacion' => isset($linea['cantidad_presentacion']) && $linea['cantidad_presentacion'] !== ''
@@ -619,6 +968,19 @@ class StockService
         }
 
         return $resultado;
+    }
+
+    protected function fechaOpcional(mixed $valor): ?Carbon
+    {
+        if (blank($valor)) {
+            return null;
+        }
+
+        try {
+            return Carbon::createFromFormat('Y-m-d', (string) $valor)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     protected function conSigno(array $lineas, int $signo): array

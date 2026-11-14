@@ -89,6 +89,14 @@
                                 <label class="form-check-label" for="usa_series">Trabajar con números de serie</label>
                             </div>
                         </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Avisar vencimientos con</label>
+                            <div class="input-group">
+                                <input type="number" name="dias_aviso_vencimiento" class="form-control" min="1" max="365"
+                                       value="{{ old('dias_aviso_vencimiento', $empresa->dias_aviso_vencimiento) }}" required>
+                                <span class="input-group-text">días de anticipación</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

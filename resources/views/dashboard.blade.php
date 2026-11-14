@@ -14,6 +14,38 @@
         @endif
     </div>
 
+    @if ($vencimientos['vencidos'] || $vencimientos['por_vencer'])
+        <div class="alert {{ $vencimientos['vencidos'] ? 'alert-danger' : 'alert-warning' }} d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span>
+                <i class="bi bi-calendar-x"></i>
+                @if ($vencimientos['vencidos'])
+                    <strong>{{ $vencimientos['vencidos'] }}</strong> {{ $vencimientos['vencidos'] === 1 ? 'lote vencido' : 'lotes vencidos' }} con stock.
+                @endif
+                @if ($vencimientos['por_vencer'])
+                    <strong>{{ $vencimientos['por_vencer'] }}</strong> {{ $vencimientos['por_vencer'] === 1 ? 'lote vence' : 'lotes vencen' }} en los próximos {{ $empresa->dias_aviso_vencimiento }} días.
+                @endif
+            </span>
+            <a href="{{ route('inventario.vencimientos.index') }}" class="btn btn-sm {{ $vencimientos['vencidos'] ? 'btn-danger' : 'btn-warning' }}">Ver vencimientos</a>
+        </div>
+    @endif
+
+    @if ($transferenciasPendientes->isNotEmpty())
+        <div class="card mb-4 border-warning">
+            <div class="card-header bg-warning-subtle fw-semibold"><i class="bi bi-truck"></i> Transferencias en camino a tus depósitos</div>
+            <ul class="list-group list-group-flush">
+                @foreach ($transferenciasPendientes as $t)
+                    <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <span>
+                            N° {{ $t->numero_texto }} · {{ $t->origen?->nombre }} <i class="bi bi-arrow-right"></i> <strong>{{ $t->destino?->nombre }}</strong>
+                            <span class="small text-muted">· enviada {{ $t->enviada_at->diffForHumans() }}</span>
+                        </span>
+                        <a href="{{ route('inventario.transferencias.recepcion', $t) }}" class="btn btn-sm btn-success"><i class="bi bi-box-arrow-in-down"></i> Recibir</a>
+                    </li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+
     <div class="row g-3 mb-4">
         @foreach ($indicadores as $ind)
             <div class="col-6 col-xl-3">

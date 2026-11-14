@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Models\Concerns\BelongsToEmpresa;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /**
  * Renglón de un movimiento. El conjunto de renglones de un producto es su kardex.
@@ -63,6 +64,16 @@ class MovimientoItem extends Model
     public function ubicacion(): BelongsTo
     {
         return $this->belongsTo(Ubicacion::class);
+    }
+
+    public function lote(): BelongsTo
+    {
+        return $this->belongsTo(Lote::class);
+    }
+
+    public function series(): BelongsToMany
+    {
+        return $this->belongsToMany(Serie::class, 'movimiento_item_serie')->orderBy('series.numero');
     }
 
     public function presentacion(): BelongsTo

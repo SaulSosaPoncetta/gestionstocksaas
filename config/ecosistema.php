@@ -45,6 +45,7 @@ return [
 
         'comercial' => [
             'maestro_productos' => 'stock',   // stock | comercial  → quién es dueño del alta de productos
+            'maestro_proveedores' => 'stock', // stock | comercial  → quién es dueño del alta de proveedores
             'descontar_al' => 'factura',      // factura | remito
             'ingresar_al' => 'recepcion',     // recepcion | factura_compra
             'deposito_id' => null,            // depósito por defecto si Comercial no informa sucursal

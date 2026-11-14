@@ -16,6 +16,11 @@ class Empresa extends Model
     public const COSTEO_PROMEDIO = 'promedio_ponderado';
     public const COSTEO_PEPS = 'peps';
 
+    /** Módulos que se venden aparte (los habilita MiGestión según el plan). */
+    public const MODULOS = [
+        'compras' => 'Abastecimiento: proveedores, órdenes de compra, recepción y reposición',
+    ];
+
     protected $table = 'empresas';
 
     protected $fillable = [
@@ -34,6 +39,8 @@ class Empresa extends Model
         'permite_stock_negativo',
         'usa_lotes',
         'usa_series',
+        'dias_aviso_vencimiento',
+        'modulos',
         'decimales_cantidad',
         'activa',
         'vence_el',
@@ -45,6 +52,8 @@ class Empresa extends Model
             'permite_stock_negativo' => 'boolean',
             'usa_lotes' => 'boolean',
             'usa_series' => 'boolean',
+            'dias_aviso_vencimiento' => 'integer',
+            'modulos' => 'array',
             'decimales_cantidad' => 'integer',
             'activa' => 'boolean',
             'vence_el' => 'date',
@@ -93,6 +102,18 @@ class Empresa extends Model
     public function usaSistema(string $sistema): bool
     {
         return $this->integracion($sistema) !== null;
+    }
+
+    /* ---------- Módulos ---------- */
+
+    /** Sin configuración (null) tiene todos; si no, solo los marcados en true. */
+    public function tieneModulo(string $modulo): bool
+    {
+        if ($this->modulos === null) {
+            return true;
+        }
+
+        return (bool) ($this->modulos[$modulo] ?? false);
     }
 
     /* ---------- Helpers ---------- */

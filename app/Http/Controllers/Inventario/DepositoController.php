@@ -15,7 +15,7 @@ class DepositoController extends Controller
 {
     public function index(Request $request)
     {
-        $depositos = Deposito::with('responsable')
+        $depositos = Deposito::visibles()->with('responsable')
             ->withCount('ubicaciones')
             ->when($request->query('estado') !== 'todos', fn ($q) => $q->where('activo', true))
             ->orderByDesc('es_principal')
@@ -56,11 +56,15 @@ class DepositoController extends Controller
 
     public function edit(Deposito $deposito)
     {
+        abort_if($deposito->es_transito, 404);
+
         return view('inventario.deposito-form', $this->datosFormulario($deposito));
     }
 
     public function update(Request $request, Deposito $deposito)
     {
+        abort_if($deposito->es_transito, 404);
+
         $datos = $this->validar($request, $deposito);
 
         if ($deposito->es_principal && ! $datos['activo']) {
@@ -80,6 +84,8 @@ class DepositoController extends Controller
 
     public function principal(Deposito $deposito)
     {
+        abort_if($deposito->es_transito, 404);
+
         $deposito->marcarComoPrincipal();
 
         return back()->with('success', "{$deposito->nombre} es ahora el depósito principal.");
@@ -87,6 +93,8 @@ class DepositoController extends Controller
 
     public function destroy(Deposito $deposito)
     {
+        abort_if($deposito->es_transito, 404);
+
         if ($deposito->es_principal) {
             return back()->with('error', 'No se puede eliminar el depósito principal.');
         }

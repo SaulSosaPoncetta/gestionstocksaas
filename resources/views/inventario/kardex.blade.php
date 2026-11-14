@@ -50,10 +50,18 @@
                                 <td class="fw-semibold">{{ $deposito?->nombre }}</td>
                                 <td class="text-end fw-semibold">{{ Formato::cantidad($filas->sum('cantidad')) }} {{ $unidad }}</td>
                             </tr>
-                            @if ($filas->count() > 1 || $filas->first()->ubicacion_id)
+                            @if ($filas->count() > 1 || $filas->first()->ubicacion_id || $filas->first()->lote_id)
                                 @foreach ($filas as $e)
                                     <tr>
-                                        <td class="ps-4 small"><i class="bi bi-geo text-muted"></i> {{ $e->ubicacion?->codigo ?? 'Sin ubicar' }}</td>
+                                        <td class="ps-4 small">
+                                            <i class="bi bi-geo text-muted"></i> {{ $e->ubicacion?->codigo ?? 'Sin ubicar' }}
+                                            @if ($e->lote)
+                                                · Lote {{ $e->lote->codigo }}
+                                                @if ($e->lote->fecha_vencimiento)
+                                                    <span class="{{ $e->lote->estaVencido() ? 'text-danger fw-semibold' : 'text-muted' }}">(vence {{ $e->lote->fecha_vencimiento->format('d/m/Y') }})</span>
+                                                @endif
+                                            @endif
+                                        </td>
                                         <td class="text-end small">{{ Formato::cantidad($e->cantidad) }}</td>
                                     </tr>
                                 @endforeach
@@ -103,6 +111,7 @@
                     <th>Movimiento</th>
                     <th>Depósito</th>
                     <th>Ubicación</th>
+                    @if ($producto->usa_lotes)<th>Lote</th>@endif
                     <th class="text-end">Entrada</th>
                     <th class="text-end">Salida</th>
                     <th class="text-end">Saldo en depósito</th>
@@ -125,13 +134,14 @@
                         </td>
                         <td class="small">{{ $item->deposito?->nombre }}</td>
                         <td class="small">{{ $item->ubicacion?->codigo }}</td>
+                        @if ($producto->usa_lotes)<td class="small">{{ $item->lote?->codigo }}</td>@endif
                         <td class="text-end text-success">{{ $item->entrada ? Formato::cantidad($item->entrada) : '' }}</td>
                         <td class="text-end text-danger">{{ $item->salida ? Formato::cantidad($item->salida) : '' }}</td>
                         <td class="text-end fw-semibold">{{ Formato::cantidad($item->saldo) }}</td>
                         <td class="text-end small">{{ Formato::moneda($item->costo_unitario) }}</td>
                     </tr>
                 @empty
-                    <tr><td colspan="8" class="text-center text-muted py-4">No hay movimientos para los filtros elegidos.</td></tr>
+                    <tr><td colspan="9" class="text-center text-muted py-4">No hay movimientos para los filtros elegidos.</td></tr>
                 @endforelse
                 </tbody>
             </table>

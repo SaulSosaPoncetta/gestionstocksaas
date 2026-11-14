@@ -52,6 +52,11 @@ class Existencia extends Model
         return $this->belongsTo(Ubicacion::class);
     }
 
+    public function lote(): BelongsTo
+    {
+        return $this->belongsTo(Lote::class);
+    }
+
     /* ---------- Helpers ---------- */
 
     public static function clave(int $productoId, int $depositoId, ?int $ubicacionId = null, ?int $loteId = null): string

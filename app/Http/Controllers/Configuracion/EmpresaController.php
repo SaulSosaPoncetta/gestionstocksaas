@@ -49,6 +49,7 @@ class EmpresaController extends Controller
             // Nota: en el paso 13 se bloquea el cambio de método de costeo si ya hay movimientos
             'metodo_costeo' => ['required', Rule::in(array_keys(self::METODOS_COSTEO))],
             'decimales_cantidad' => ['required', 'integer', 'between:0,4'],
+            'dias_aviso_vencimiento' => ['required', 'integer', 'between:1,365'],
         ]);
 
         $datos['permite_stock_negativo'] = $request->boolean('permite_stock_negativo');

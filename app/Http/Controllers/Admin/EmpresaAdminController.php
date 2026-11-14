@@ -23,6 +23,7 @@ class EmpresaAdminController extends Controller
         return view('admin.empresas', [
             'empresas' => Empresa::withCount('usuarios')->orderBy('razon_social')->get(),
             'condiciones' => EmpresaController::CONDICIONES_IVA,
+            'modulos' => Empresa::MODULOS,
             'actualId' => EmpresaActual::id(),
         ]);
     }
@@ -75,6 +76,20 @@ class EmpresaAdminController extends Controller
 
         return redirect()->route('admin.empresas.index')
             ->with('success', "Empresa {$empresa->nombre} creada con su administrador.");
+    }
+
+    /** Habilita o quita módulos según el plan contratado (más adelante lo hace MiGestión Panel por API). */
+    public function modulos(Request $request, Empresa $empresa)
+    {
+        $modulos = [];
+
+        foreach (array_keys(Empresa::MODULOS) as $modulo) {
+            $modulos[$modulo] = $request->boolean("modulos.{$modulo}");
+        }
+
+        $empresa->update(['modulos' => $modulos]);
+
+        return back()->with('success', "Módulos de {$empresa->nombre} actualizados.");
     }
 
     public function entrar(Empresa $empresa)

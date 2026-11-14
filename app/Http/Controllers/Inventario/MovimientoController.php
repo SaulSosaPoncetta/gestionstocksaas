@@ -129,7 +129,11 @@ class MovimientoController extends Controller
             'items.deposito',
             'items.ubicacion',
             'items.presentacion',
+            'items.lote',
+            'items.series',
             'motivo',
+            'transferencia',
+            'recepcionCompra.orden',
             'deposito',
             'depositoDestino',
             'usuario',
@@ -142,7 +146,7 @@ class MovimientoController extends Controller
 
         return view('inventario.movimiento', [
             'movimiento' => $movimiento,
-            'puedeAnular' => $movimiento->puedeAnularse()
+            'puedeAnular' => $movimiento->puedeAnularseManualmente()
                 && $usuario->tieneRol('admin', 'encargado')
                 && $usuario->puedeOperarDeposito($movimiento->deposito_id)
                 && (! $movimiento->deposito_destino_id || $usuario->puedeOperarDeposito($movimiento->deposito_destino_id)),
@@ -204,6 +208,10 @@ class MovimientoController extends Controller
             'lineas.*.costo_unitario' => ['nullable', 'numeric', 'min:0'],
             'lineas.*.ubicacion_id' => ['nullable', 'integer'],
             'lineas.*.presentacion_id' => ['nullable', 'integer'],
+            'lineas.*.lote_id' => ['nullable', 'integer'],
+            'lineas.*.lote_codigo' => ['nullable', 'string', 'max:60'],
+            'lineas.*.lote_vencimiento' => ['nullable', 'date'],
+            'lineas.*.series' => ['nullable', 'string', 'max:20000'],
         ], [
             'lineas.required' => 'Agregá al menos un producto.',
             'motivo_id.required' => 'Elegí el motivo.',
@@ -351,7 +359,9 @@ class MovimientoController extends Controller
             ->get()
             ->keyBy('id');
 
-        return collect($lineas)->map(function ($linea) use ($productos) {
+        $lotesConocidos = $this->lotesConocidos($productos->where('usa_lotes', true)->keys()->all());
+
+        return collect($lineas)->map(function ($linea) use ($productos, $lotesConocidos) {
             $producto = $productos->get((int) ($linea['producto_id'] ?? 0));
 
             if (! $producto) {
@@ -370,6 +380,9 @@ class MovimientoController extends Controller
                     'unidad' => $producto->unidad?->abreviatura,
                     'permite_decimales' => (bool) $producto->unidad?->permite_decimales,
                     'costo' => (float) $producto->costo_valuacion,
+                    'usa_lotes' => $producto->usa_lotes,
+                    'usa_series' => $producto->usa_series,
+                    'lotes_conocidos' => $lotesConocidos[$producto->id] ?? [],
                     'presentacion' => $presentacion ? [
                         'id' => $presentacion->id,
                         'nombre' => $presentacion->nombre,
@@ -379,8 +392,31 @@ class MovimientoController extends Controller
                 'cantidad' => $linea['cantidad'] ?? '',
                 'costo_unitario' => $linea['costo_unitario'] ?? '',
                 'ubicacion_id' => $linea['ubicacion_id'] ?? '',
+                'lote_id' => $linea['lote_id'] ?? '',
+                'lote_codigo' => $linea['lote_codigo'] ?? '',
+                'lote_vencimiento' => $linea['lote_vencimiento'] ?? '',
+                'series' => $linea['series'] ?? '',
             ];
         })->filter()->values()->all();
+    }
+
+    /** Últimos lotes cargados de cada producto (para sugerirlos al escribir). */
+    public static function lotesConocidos(array $productoIds): array
+    {
+        if (! $productoIds) {
+            return [];
+        }
+
+        return \App\Models\Lote::whereIn('producto_id', $productoIds)
+            ->orderByDesc('id')
+            ->limit(300)
+            ->get(['producto_id', 'codigo', 'fecha_vencimiento'])
+            ->groupBy('producto_id')
+            ->map(fn ($lotes) => $lotes->take(20)->map(fn ($l) => [
+                'codigo' => $l->codigo,
+                'vencimiento' => $l->fecha_vencimiento?->toDateString(),
+            ])->values()->all())
+            ->all();
     }
 
     protected function fecha(?string $valor): ?Carbon

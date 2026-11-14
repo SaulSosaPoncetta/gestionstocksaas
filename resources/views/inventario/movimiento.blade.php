@@ -43,6 +43,22 @@
         </div>
     @endif
 
+    @if ($movimiento->transferencia)
+        <div class="alert alert-info">
+            <i class="bi bi-truck"></i> Generado por la
+            <a href="{{ route('inventario.transferencias.show', $movimiento->transferencia) }}" class="alert-link">transferencia N° {{ $movimiento->transferencia->numero_texto }}</a>.
+            Se gestiona desde ahí.
+        </div>
+    @endif
+
+    @if ($movimiento->recepcionCompra)
+        <div class="alert alert-info">
+            <i class="bi bi-cart-check"></i> Generado por la
+            <a href="{{ route('compras.recepciones.show', $movimiento->recepcionCompra) }}" class="alert-link">recepción N° {{ $movimiento->recepcionCompra->numero_texto }}</a>
+            de la orden de compra N° {{ $movimiento->recepcionCompra->orden?->numero_texto }}. Se gestiona desde Compras.
+        </div>
+    @endif
+
     @if ($movimiento->anulaA)
         <div class="alert alert-secondary">
             Este movimiento anula al
@@ -117,6 +133,19 @@
                         <td>
                             <a href="{{ route('inventario.kardex', $item->producto_id) }}" class="fw-semibold text-decoration-none">{{ $item->producto?->nombre }}</a>
                             <div class="small text-muted"><code>{{ $item->producto?->sku }}</code></div>
+                            @if ($item->lote)
+                                <div class="small"><span class="badge text-bg-light border">Lote {{ $item->lote->codigo }}</span>
+                                    @if ($item->lote->fecha_vencimiento)<span class="text-muted">vence {{ $item->lote->fecha_vencimiento->format('d/m/Y') }}</span>@endif
+                                </div>
+                            @endif
+                            @if ($item->series->isNotEmpty())
+                                <div class="small text-muted">
+                                    Series:
+                                    @foreach ($item->series as $serie)
+                                        <a href="{{ route('inventario.series.show', $serie) }}" class="badge text-bg-light border text-decoration-none font-monospace">{{ $serie->numero }}</a>
+                                    @endforeach
+                                </div>
+                            @endif
                         </td>
                         @if ($esTransferencia)<td class="small">{{ $item->deposito?->nombre }}</td>@endif
                         <td class="small">{{ $item->ubicacion?->codigo ?? '—' }}</td>

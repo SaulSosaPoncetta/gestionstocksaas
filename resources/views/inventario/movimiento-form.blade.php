@@ -101,7 +101,8 @@
                     <thead class="table-light">
                     <tr>
                         <th>Producto</th>
-                        <th class="col-ubicacion" style="width: 210px;">Ubicación</th>
+                        <th class="col-ubicacion" style="width: 190px;">Ubicación</th>
+                        <th class="col-lote" style="width: 230px;">Lote</th>
                         <th class="col-sistema text-end" style="width: 120px;">En sistema</th>
                         <th style="width: 160px;" id="tituloCantidad">Cantidad</th>
                         <th class="col-resultado text-end" style="width: 130px;" id="tituloResultado">Diferencia</th>
@@ -112,7 +113,7 @@
                     </thead>
                     <tbody id="lineas">
                     <tr id="filaVacia">
-                        <td colspan="8" class="text-center text-muted py-5">
+                        <td colspan="9" class="text-center text-muted py-5">
                             <i class="bi bi-upc-scan fs-1 d-block mb-2"></i>
                             Todavía no agregaste productos.
                         </td>
@@ -194,6 +195,7 @@
         ver('.col-sistema', MODO !== 'entrada');
         ver('.col-resultado', MODO === 'ajuste');
         ver('.col-costo', pideCosto());
+        ver('.col-lote', !!tbody.querySelector('tr.linea[data-lotes="1"]'));
 
         document.getElementById('tituloCantidad').textContent =
             MODO === 'ajuste' ? (modoAjuste() === 'contado' ? 'Contado' : 'Diferencia (+/−)') : 'Cantidad';
@@ -207,8 +209,12 @@
                 : 'Cargá la diferencia: positiva para sumar, negativa (con signo −) para restar.',
         }[MODO];
 
-        tbody.querySelectorAll('input.cantidad').forEach((campo) => {
-            campo.min = MODO === 'ajuste' && modoAjuste() === 'diferencia' ? '' : '0';
+        const porDiferencia = MODO === 'ajuste' && modoAjuste() === 'diferencia';
+        tbody.querySelectorAll('tr.linea').forEach((fila) => {
+            const campo = fila.querySelector('input.cantidad');
+            campo.min = porDiferencia ? '' : '0';
+            // Con series la cantidad sale de los números cargados (en "diferencia" se puede poner el signo)
+            campo.readOnly = fila.dataset.series === '1' && !porDiferencia;
         });
 
         // Las observaciones obligatorias dependen del motivo
@@ -255,14 +261,64 @@
             const respuesta = await fetch(url, { headers: { 'Accept': 'application/json' } });
             if (respuesta.ok) {
                 stock = { ...stock, ...(await respuesta.json()) };
+                refrescarLotes();
                 recalcular();
             }
         } catch (error) { /* se verá al guardar */ }
     }
 
+    /* ---------- Lotes ---------- */
+    function lotesEnStock(productoId) {
+        return stock[productoId]?.lotes ?? [];
+    }
+
+    function fechaCorta(iso) {
+        if (!iso) return '';
+        const [a, m, d] = iso.split('-');
+        return `${d}/${m}/${a}`;
+    }
+
+    function opcionesLote(productoId, seleccionado = '') {
+        return '<option value="">Automático (vence antes primero)</option>' + lotesEnStock(productoId)
+            .map((l) => `<option value="${l.id}" ${String(l.id) === String(seleccionado) ? 'selected' : ''}>`
+                + `${escapar(l.codigo)}${l.vencimiento ? ' · vence ' + fechaCorta(l.vencimiento) : ''} · ${fc(l.cantidad)}${l.vencido ? ' · VENCIDO' : ''}</option>`)
+            .join('');
+    }
+
+    function refrescarLotes() {
+        tbody.querySelectorAll('tr.linea[data-lotes="1"]').forEach((fila) => {
+            const select = fila.querySelector('select.lote');
+            if (select) select.innerHTML = opcionesLote(fila.dataset.producto, select.value || fila.dataset.loteInicial || '');
+
+            const lista = fila.querySelector('datalist');
+            if (lista) {
+                const conocidos = JSON.parse(fila.dataset.lotesConocidos || '[]');
+                const enStock = lotesEnStock(fila.dataset.producto).map((l) => ({ codigo: l.codigo, vencimiento: l.vencimiento }));
+                const todos = [...new Map([...enStock, ...conocidos].map((l) => [l.codigo, l])).values()];
+                lista.innerHTML = todos.map((l) => `<option value="${escapar(l.codigo)}" data-vencimiento="${l.vencimiento ?? ''}">${l.vencimiento ? 'vence ' + fechaCorta(l.vencimiento) : ''}</option>`).join('');
+            }
+        });
+    }
+
+    // Al elegir un lote conocido se completa su vencimiento
+    tbody.addEventListener('change', (e) => {
+        if (!e.target.matches('input.lote-codigo')) return;
+        const fila = e.target.closest('tr');
+        const opcion = [...fila.querySelectorAll('datalist option')].find((o) => o.value.toUpperCase() === e.target.value.trim().toUpperCase());
+        const vence = fila.querySelector('input.lote-vencimiento');
+        if (opcion && opcion.dataset.vencimiento && vence) vence.value = opcion.dataset.vencimiento;
+        recalcular();
+    });
+
     function enSistema(fila) {
         const datos = stock[fila.dataset.producto];
         if (!datos) return null;
+
+        // Con lote elegido se compara contra ese lote
+        const loteId = fila.querySelector('select.lote')?.value;
+        const loteCodigo = fila.querySelector('input.lote-codigo')?.value.trim().toUpperCase();
+        if (loteId) return lotesEnStock(fila.dataset.producto).find((l) => String(l.id) === loteId)?.cantidad ?? 0;
+        if (loteCodigo && MODO === 'ajuste') return lotesEnStock(fila.dataset.producto).find((l) => l.codigo.toUpperCase() === loteCodigo)?.cantidad ?? 0;
 
         // Sin ubicación se compara contra el total del depósito; con ubicación, contra esa ubicación
         const ubicacion = fila.querySelector('select.ubicacion')?.value ?? '';
@@ -276,11 +332,15 @@
         const existente = tbody.querySelector(`tr.linea[data-clave="${clave}"]`);
 
         if (producto.stock_ubicaciones !== undefined && producto.stock !== null) {
-            stock[producto.id] = { total: producto.stock, ubicaciones: producto.stock_ubicaciones ?? {} };
+            stock[producto.id] = { total: producto.stock, ubicaciones: producto.stock_ubicaciones ?? {}, lotes: producto.stock_lotes ?? [] };
         }
 
+        // Productos con lote o con series: siempre una línea nueva por lote / grupo de series
+        const conSeries = !!producto.usa_series;
+        const conLotes = !!producto.usa_lotes;
+
         // Mismo producto otra vez: en entradas y salidas suma 1; en ajustes enfoca la línea
-        if (existente && valores.cantidad === undefined) {
+        if (existente && valores.cantidad === undefined && !conSeries && !conLotes) {
             const campo = existente.querySelector('.cantidad');
             if (MODO !== 'ajuste') campo.value = (parseFloat(campo.value) || 0) + 1;
             resaltar(existente);
@@ -295,7 +355,19 @@
         const factor = pres ? pres.cantidad : 1;
         const unidadLinea = pres ? escapar(pres.nombre) : escapar(producto.unidad);
         const paso = (producto.permite_decimales && !pres) ? 'any' : '1';
-        const cantidadInicial = valores.cantidad !== undefined ? valores.cantidad : (MODO === 'ajuste' ? '' : 1);
+        const cantidadInicial = valores.cantidad !== undefined ? valores.cantidad : (MODO === 'ajuste' || conSeries ? '' : 1);
+        const entraLote = MODO === 'entrada' || MODO === 'ajuste';
+        const celdaLote = !conLotes ? '<span class="text-muted small">—</span>' : (entraLote ? `
+                <div class="input-group input-group-sm">
+                    <input type="text" name="lineas[${i}][lote_codigo]" class="form-control lote-codigo text-uppercase" maxlength="60"
+                           placeholder="${MODO === 'ajuste' ? 'Lote (opcional)' : 'N° de lote'}" list="lotes-${i}" value="${escapar(valores.lote_codigo ?? '')}" ${MODO === 'entrada' ? 'required' : ''}>
+                    <input type="date" name="lineas[${i}][lote_vencimiento]" class="form-control lote-vencimiento" title="Vencimiento" value="${escapar(valores.lote_vencimiento ?? '')}">
+                </div>
+                <datalist id="lotes-${i}"></datalist>` : `
+                <select name="lineas[${i}][lote_id]" class="form-select form-select-sm lote"></select>`);
+        const celdaSeries = !conSeries ? '' : `
+                <textarea name="lineas[${i}][series]" class="form-control form-control-sm font-monospace series mt-1" rows="2"
+                          placeholder="Números de serie (uno por línea; podés escanearlos)">${escapar(Array.isArray(valores.series) ? valores.series.join('\n') : (valores.series ?? ''))}</textarea>`;
         const costoSugerido = valores.costo_unitario !== undefined && valores.costo_unitario !== ''
             ? valores.costo_unitario
             : producto.costo * factor;
@@ -306,6 +378,10 @@
         fila.dataset.producto = producto.id;
         fila.dataset.factor = factor;
         fila.dataset.unidad = producto.unidad ?? '';
+        fila.dataset.lotes = conLotes ? '1' : '0';
+        fila.dataset.series = conSeries ? '1' : '0';
+        fila.dataset.loteInicial = valores.lote_id ?? '';
+        fila.dataset.lotesConocidos = JSON.stringify(producto.lotes_conocidos ?? []);
         fila.innerHTML = `
             <td>
                 <input type="hidden" name="lineas[${i}][producto_id]" value="${producto.id}">
@@ -315,16 +391,18 @@
                     <code>${escapar(producto.sku)}</code>
                     ${pres ? ` · <span class="badge text-bg-info">${escapar(pres.nombre)} = ${fc(pres.cantidad)} ${escapar(producto.unidad)}</span>` : ''}
                 </div>
+                ${celdaSeries}
                 <div class="small aviso"></div>
             </td>
             <td class="col-ubicacion">
                 <select name="lineas[${i}][ubicacion_id]" class="form-select form-select-sm ubicacion">${opcionesUbicacion(valores.ubicacion_id ?? '')}</select>
             </td>
+            <td class="col-lote">${celdaLote}</td>
             <td class="col-sistema text-end sistema text-muted">—</td>
             <td>
                 <div class="input-group input-group-sm">
-                    <input type="number" name="lineas[${i}][cantidad]" class="form-control cantidad" step="${paso}" required
-                           value="${escapar(cantidadInicial)}">
+                    <input type="number" name="lineas[${i}][cantidad]" class="form-control cantidad" step="${conSeries ? '1' : paso}" required
+                           value="${escapar(cantidadInicial)}" ${conSeries && !(MODO === 'ajuste' && modoAjuste() === 'diferencia') ? 'readonly tabindex="-1"' : ''}>
                     <span class="input-group-text">${unidadLinea}</span>
                 </div>
             </td>
@@ -342,14 +420,32 @@
             </td>`;
 
         tbody.appendChild(fila);
+        refrescarLotes();
         refrescarColumnas();
 
         if (valores.cantidad === undefined) {
-            const campo = fila.querySelector('.cantidad');
+            const campo = fila.querySelector(conSeries ? '.series' : (conLotes && entraLote && MODO === 'entrada' ? '.lote-codigo' : '.cantidad'));
             campo.focus();
-            campo.select();
+            campo.select?.();
         }
     }
+
+    // Series: la cantidad es la cantidad de números cargados (en ajustes por diferencia, con el signo elegido)
+    function contarSeries(fila) {
+        const texto = fila.querySelector('.series')?.value ?? '';
+        const numeros = [...new Set(texto.split(/[\r\n,;]+/).map((n) => n.trim()).filter(Boolean))];
+        const campo = fila.querySelector('.cantidad');
+        if (MODO === 'ajuste' && modoAjuste() === 'diferencia') {
+            const signo = (parseFloat(campo.value) || 0) < 0 ? -1 : 1;
+            campo.value = numeros.length ? signo * numeros.length : '';
+        } else {
+            campo.value = numeros.length || '';
+        }
+    }
+
+    tbody.addEventListener('input', (e) => {
+        if (e.target.matches('.series')) { contarSeries(e.target.closest('tr')); recalcular(); }
+    });
 
     function resaltar(fila) {
         fila.classList.remove('fila-nueva');
@@ -380,6 +476,10 @@
 
             // Stock en sistema
             fila.querySelector('.sistema').textContent = sistema === null ? '—' : `${fc(sistema)} ${fila.dataset.unidad}`;
+
+            if (MODO === 'ajuste' && modoAjuste() === 'contado' && fila.dataset.series === '1') {
+                aviso.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Con números de serie usá "La diferencia".</span>';
+            }
 
             if (MODO === 'salida' && sistema !== null && valor !== null && valor > sistema + 0.00005) {
                 aviso.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Supera el stock (${fc(sistema)} ${unidad})</span>`;
@@ -412,7 +512,7 @@
     });
 
     tbody.addEventListener('change', (e) => {
-        if (e.target.matches('select.ubicacion')) recalcular();
+        if (e.target.matches('select.ubicacion, select.lote')) recalcular();
     });
 
     tbody.addEventListener('click', (e) => {
