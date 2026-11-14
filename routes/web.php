@@ -15,6 +15,9 @@ use App\Http\Controllers\Configuracion\IntegracionController;
 use App\Http\Controllers\Configuracion\MotivoController;
 use App\Http\Controllers\Configuracion\UsuarioController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\Salidas\ClienteController;
+use App\Http\Controllers\Salidas\RemitoController;
+use App\Http\Controllers\Salidas\ReservaController;
 use App\Http\Controllers\Inventario\DepositoController;
 use App\Http\Controllers\Inventario\MovimientoController;
 use App\Http\Controllers\Inventario\SerieController;
@@ -130,6 +133,29 @@ Route::middleware('auth')->group(function () {
                 Route::post('/proveedores/{proveedor}/productos', [ProveedorController::class, 'guardarProducto'])->whereNumber('proveedor')->name('proveedores.productos.store');
                 Route::delete('/proveedores/{proveedor}/productos/{vinculo}', [ProveedorController::class, 'quitarProducto'])->whereNumber('proveedor')->name('proveedores.productos.destroy');
             });
+        });
+
+        /* Salidas a clientes: remitos, reservas y clientes */
+        Route::middleware('rol:admin,encargado,operador')->prefix('salidas')->name('salidas.')->group(function () {
+            Route::get('/remitos', [RemitoController::class, 'index'])->name('remitos.index');
+            Route::get('/remitos/nuevo', [RemitoController::class, 'create'])->name('remitos.create');
+            Route::post('/remitos', [RemitoController::class, 'store'])->name('remitos.store');
+            Route::get('/remitos/{remito}', [RemitoController::class, 'show'])->whereNumber('remito')->name('remitos.show');
+            Route::post('/remitos/{remito}/anular', [RemitoController::class, 'anular'])->whereNumber('remito')
+                ->middleware('rol:admin,encargado')->name('remitos.anular');
+
+            Route::get('/reservas', [ReservaController::class, 'index'])->name('reservas.index');
+            Route::get('/reservas/nueva', [ReservaController::class, 'create'])->name('reservas.create');
+            Route::post('/reservas', [ReservaController::class, 'store'])->name('reservas.store');
+            Route::get('/reservas/{reserva}', [ReservaController::class, 'show'])->whereNumber('reserva')->name('reservas.show');
+            Route::post('/reservas/{reserva}/liberar', [ReservaController::class, 'liberar'])->whereNumber('reserva')->name('reservas.liberar');
+
+            Route::get('/clientes', [ClienteController::class, 'index'])->name('clientes.index');
+            Route::get('/clientes/nuevo', [ClienteController::class, 'create'])->name('clientes.create');
+            Route::post('/clientes', [ClienteController::class, 'store'])->name('clientes.store');
+            Route::get('/clientes/{cliente}', [ClienteController::class, 'show'])->whereNumber('cliente')->name('clientes.show');
+            Route::get('/clientes/{cliente}/editar', [ClienteController::class, 'edit'])->whereNumber('cliente')->name('clientes.edit');
+            Route::put('/clientes/{cliente}', [ClienteController::class, 'update'])->whereNumber('cliente')->name('clientes.update');
         });
 
         /* Depósitos y ubicaciones */

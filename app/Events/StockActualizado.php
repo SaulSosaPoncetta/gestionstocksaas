@@ -7,6 +7,7 @@ use Illuminate\Foundation\Events\Dispatchable;
 
 /**
  * Se dispara cada vez que cambia el stock, recién cuando la transacción se confirmó.
+ * También cuando cambia lo reservado (sin movimiento: movimientoId = null).
  * Lo van a escuchar las alertas (paso 15) y los webhooks a otros sistemas (paso 17).
  */
 class StockActualizado implements ShouldDispatchAfterCommit
@@ -19,7 +20,7 @@ class StockActualizado implements ShouldDispatchAfterCommit
      */
     public function __construct(
         public int $empresaId,
-        public int $movimientoId,
+        public ?int $movimientoId,
         public array $productoIds,
         public array $depositoIds,
     ) {

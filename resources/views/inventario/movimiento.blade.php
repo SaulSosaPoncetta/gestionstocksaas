@@ -59,6 +59,14 @@
         </div>
     @endif
 
+    @if ($movimiento->remito)
+        <div class="alert alert-info">
+            <i class="bi bi-truck"></i> Generado por el
+            <a href="{{ route('salidas.remitos.show', $movimiento->remito) }}" class="alert-link">remito N° {{ $movimiento->remito->numero_texto }}</a>{{ $movimiento->remito->cliente ? ' a ' . $movimiento->remito->cliente->nombre : '' }}.
+            Para revertirlo, anulá el remito.
+        </div>
+    @endif
+
     @if ($movimiento->anulaA)
         <div class="alert alert-secondary">
             Este movimiento anula al

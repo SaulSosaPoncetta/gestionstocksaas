@@ -103,7 +103,7 @@
                         <th>Producto</th>
                         <th class="col-ubicacion" style="width: 190px;">Ubicación</th>
                         <th class="col-lote" style="width: 230px;">Lote</th>
-                        <th class="col-sistema text-end" style="width: 120px;">En sistema</th>
+                        <th class="col-sistema text-end" style="width: 120px;">{{ $modo === 'salida' ? 'Disponible' : 'En sistema' }}</th>
                         <th style="width: 160px;" id="tituloCantidad">Cantidad</th>
                         <th class="col-resultado text-end" style="width: 130px;" id="tituloResultado">Diferencia</th>
                         <th class="col-costo" style="width: 170px;">Costo unit. (sin IVA)</th>
@@ -320,9 +320,9 @@
         if (loteId) return lotesEnStock(fila.dataset.producto).find((l) => String(l.id) === loteId)?.cantidad ?? 0;
         if (loteCodigo && MODO === 'ajuste') return lotesEnStock(fila.dataset.producto).find((l) => l.codigo.toUpperCase() === loteCodigo)?.cantidad ?? 0;
 
-        // Sin ubicación se compara contra el total del depósito; con ubicación, contra esa ubicación
+        // Sin ubicación se compara contra el total del depósito (en salidas, contra lo disponible: real − reservado)
         const ubicacion = fila.querySelector('select.ubicacion')?.value ?? '';
-        if (ubicacion === '') return datos.total;
+        if (ubicacion === '') return MODO === 'salida' ? (datos.disponible ?? datos.total) : datos.total;
         return datos.ubicaciones?.[ubicacion] ?? 0;
     }
 
@@ -332,7 +332,7 @@
         const existente = tbody.querySelector(`tr.linea[data-clave="${clave}"]`);
 
         if (producto.stock_ubicaciones !== undefined && producto.stock !== null) {
-            stock[producto.id] = { total: producto.stock, ubicaciones: producto.stock_ubicaciones ?? {}, lotes: producto.stock_lotes ?? [] };
+            stock[producto.id] = { total: producto.stock, reservado: producto.stock_reservado ?? 0, disponible: producto.stock_disponible ?? producto.stock, ubicaciones: producto.stock_ubicaciones ?? {}, lotes: producto.stock_lotes ?? [] };
         }
 
         // Productos con lote o con series: siempre una línea nueva por lote / grupo de series
@@ -482,7 +482,8 @@
             }
 
             if (MODO === 'salida' && sistema !== null && valor !== null && valor > sistema + 0.00005) {
-                aviso.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Supera el stock (${fc(sistema)} ${unidad})</span>`;
+                const reservado = stock[fila.dataset.producto]?.reservado ?? 0;
+                aviso.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Supera el disponible (${fc(sistema)} ${unidad})${reservado > 0 ? ` · ${fc(reservado)} reservadas` : ''}</span>`;
             }
 
             if (MODO === 'ajuste') {

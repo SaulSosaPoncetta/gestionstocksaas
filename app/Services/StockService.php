@@ -169,6 +169,12 @@ class StockService
                 ]);
             }
 
+            if ($original->remito_id && empty($opciones['interno_remito'])) {
+                throw ValidationException::withMessages([
+                    'movimiento' => 'Este movimiento es un remito de entrega: se anula desde el remito.',
+                ]);
+            }
+
             // Primero se revierten las entradas (así las series vuelven a estar libres) y después las salidas
             $lineas = $original->items()->with('series')->get()
                 ->sortBy(fn ($item) => (float) $item->cantidad > 0 ? 0 : 1)
@@ -193,6 +199,7 @@ class StockService
                 'revertir_costo' => $original->tipo !== Movimiento::TIPO_TRANSFERENCIA,
                 'transferencia_id' => $original->transferencia_id,
                 'recepcion_compra_id' => $original->recepcion_compra_id,
+                'remito_id' => $original->remito_id,
                 'interno_transferencia' => $interno,
             ], $usuario);
 
@@ -221,9 +228,9 @@ class StockService
     }
 
     /**
-     * Stock de varios productos en un depósito: total, por ubicación (0 = sin ubicar) y por lote.
+     * Stock de varios productos en un depósito: total, reservado, disponible, por ubicación (0 = sin ubicar) y por lote.
      * [producto_id => [
-     *     'total' => 12.0,
+     *     'total' => 12.0, 'reservado' => 2.0, 'disponible' => 10.0,
      *     'ubicaciones' => [0 => 2.0, 15 => 10.0],
      *     'lotes' => [8 => ['id' => 8, 'codigo' => 'L-24', 'vencimiento' => '2026-12-01', 'vencido' => false, 'cantidad' => 12.0]],
      * ]]
@@ -237,7 +244,7 @@ class StockService
         $filas = Existencia::query()
             ->whereIn('producto_id', $productoIds)
             ->where('deposito_id', $depositoId)
-            ->selectRaw('producto_id, ubicacion_id, lote_id, SUM(cantidad) AS total')
+            ->selectRaw('producto_id, ubicacion_id, lote_id, SUM(cantidad) AS total, SUM(reservado) AS reservado')
             ->groupBy('producto_id', 'ubicacion_id', 'lote_id')
             ->get();
 
@@ -250,6 +257,8 @@ class StockService
             $ubicacion = (int) ($fila->ubicacion_id ?? 0);
 
             $resultado[$id]['total'] = round(($resultado[$id]['total'] ?? 0) + $total, 4);
+            $resultado[$id]['reservado'] = round(($resultado[$id]['reservado'] ?? 0) + (float) $fila->reservado, 4);
+            $resultado[$id]['disponible'] = round($resultado[$id]['total'] - $resultado[$id]['reservado'], 4);
             $resultado[$id]['ubicaciones'][$ubicacion] = round(($resultado[$id]['ubicaciones'][$ubicacion] ?? 0) + $total, 4);
             $resultado[$id]['lotes'] ??= [];
 
@@ -277,6 +286,19 @@ class StockService
         return $resultado;
     }
 
+    /** Stock que se puede usar: real menos reservado (opcionalmente de un lote). */
+    public function disponible(int $productoId, int $depositoId, ?int $loteId = null): float
+    {
+        $fila = Existencia::query()
+            ->where('producto_id', $productoId)
+            ->where('deposito_id', $depositoId)
+            ->when($loteId, fn ($q) => $q->where('lote_id', $loteId))
+            ->selectRaw('COALESCE(SUM(cantidad), 0) AS cantidad, COALESCE(SUM(reservado), 0) AS reservado')
+            ->first();
+
+        return round((float) $fila->cantidad - (float) $fila->reservado, 4);
+    }
+
     public function porReferencia(string $referencia): ?Movimiento
     {
         return Movimiento::with('items')->where('referencia_externa', $referencia)->first();
@@ -288,7 +310,7 @@ class StockService
 
     /**
      * Opciones: origen, motivo_id, referencia_externa, comprobante, fecha_comprobante, observaciones,
-     *           deposito_destino_id, anula_a_id, transferencia_id, recepcion_compra_id,
+     *           deposito_destino_id, anula_a_id, transferencia_id, recepcion_compra_id, remito_id,
      *           revertir_costo / interno_transferencia (uso interno de anular y de TransferenciaService)
      */
     public function registrar(string $tipo, int $depositoId, array $lineas, array $opciones = [], ?User $usuario = null): Movimiento
@@ -455,6 +477,11 @@ class StockService
             }
         }
 
+        // Las salidas comunes no pueden tomar stock reservado (las entregas de una reserva lo liberan antes)
+        if (! $errores && in_array($tipo, [Movimiento::TIPO_EGRESO, Movimiento::TIPO_TRANSFERENCIA], true)) {
+            $errores = $this->controlarReservas($items, $productos, $depositos);
+        }
+
         if ($errores) {
             throw ValidationException::withMessages(['lineas' => array_values(array_unique($errores))]);
         }
@@ -489,6 +516,7 @@ class StockService
             'anula_a_id' => $opciones['anula_a_id'] ?? null,
             'transferencia_id' => $opciones['transferencia_id'] ?? null,
             'recepcion_compra_id' => $opciones['recepcion_compra_id'] ?? null,
+            'remito_id' => $opciones['remito_id'] ?? null,
         ]);
 
         foreach ($items as $item) {
@@ -502,6 +530,41 @@ class StockService
         event(new StockActualizado($movimiento->empresa_id, $movimiento->id, $productoIds, $depositoIds));
 
         return $movimiento->load('items');
+    }
+
+    protected function controlarReservas(array $items, $productos, $depositos): array
+    {
+        $pares = collect($items)
+            ->filter(fn ($i) => $i['cantidad'] < 0)
+            ->map(fn ($i) => [$i['producto_id'], $i['deposito_id']])
+            ->unique(fn ($par) => implode('-', $par));
+
+        $errores = [];
+
+        foreach ($pares as [$productoId, $depositoId]) {
+            $deposito = $depositos->get($depositoId);
+
+            if (! $deposito || $deposito->es_transito || $deposito->permiteStockNegativo()) {
+                continue;
+            }
+
+            $fila = Existencia::query()
+                ->where('producto_id', $productoId)
+                ->where('deposito_id', $depositoId)
+                ->selectRaw('COALESCE(SUM(cantidad), 0) AS cantidad, COALESCE(SUM(reservado), 0) AS reservado')
+                ->first();
+
+            $reservado = (float) $fila->reservado;
+            $disponible = (float) $fila->cantidad - $reservado;
+
+            if ($reservado > self::TOLERANCIA && $disponible < -self::TOLERANCIA) {
+                $producto = $productos->get($productoId);
+                $errores[] = "{$producto?->nombre}: en {$deposito->nombre} hay " . Formato::cantidad($reservado)
+                    . ' ' . ($producto?->unidad?->abreviatura ?? '') . ' reservadas para clientes. Esa mercadería sale con el remito de la reserva (o liberá la reserva primero).';
+            }
+        }
+
+        return $errores;
     }
 
     /**

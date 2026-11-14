@@ -1,8 +1,14 @@
 <?php
 
-use Illuminate\Foundation\Inspiring;
-use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Schedule;
 
-Artisan::command('inspire', function () {
-    $this->comment(Inspiring::quote());
-})->purpose('Display an inspiring quote');
+/*
+|--------------------------------------------------------------------------
+| Tareas programadas
+|--------------------------------------------------------------------------
+| En el VPS tiene que estar el cron de Laravel:
+| * * * * * cd /var/www/gestionstock && php artisan schedule:run >> /dev/null 2>&1
+*/
+
+// Libera el stock de las reservas que vencieron
+Schedule::command('stock:liberar-reservas')->everyFifteenMinutes()->withoutOverlapping();

@@ -223,6 +223,8 @@ class ProductoController extends Controller
             'usa_lotes' => $p->usa_lotes,
             'usa_series' => $p->usa_series,
             'stock' => $depositoId ? (float) ($resumen[$p->id]['total'] ?? 0) : null,
+            'stock_reservado' => $depositoId ? (float) ($resumen[$p->id]['reservado'] ?? 0) : null,
+            'stock_disponible' => $depositoId ? (float) ($resumen[$p->id]['disponible'] ?? 0) : null,
             'stock_ubicaciones' => $depositoId ? (object) ($resumen[$p->id]['ubicaciones'] ?? []) : null,
             'stock_lotes' => $depositoId ? ($resumen[$p->id]['lotes'] ?? []) : null,
             'lotes_conocidos' => $p->usa_lotes ? ($conocidos[$p->id] ?? []) : [],
@@ -261,6 +263,8 @@ class ProductoController extends Controller
         foreach ($ids as $id) {
             $respuesta[$id] = [
                 'total' => (float) ($resumen[$id]['total'] ?? 0),
+                'reservado' => (float) ($resumen[$id]['reservado'] ?? 0),
+                'disponible' => (float) ($resumen[$id]['disponible'] ?? 0),
                 'ubicaciones' => (object) ($resumen[$id]['ubicaciones'] ?? []),
                 'lotes' => $resumen[$id]['lotes'] ?? [],
             ];

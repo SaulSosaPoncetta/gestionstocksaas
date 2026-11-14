@@ -3,9 +3,11 @@
 namespace Database\Seeders;
 
 use App\Models\AlicuotaIva;
+use App\Models\Cliente;
 use App\Models\Categoria;
 use App\Models\Deposito;
 use App\Models\Empresa;
+use App\Models\Lote;
 use App\Models\Marca;
 use App\Models\Motivo;
 use App\Models\Producto;
@@ -16,6 +18,7 @@ use App\Models\UnidadMedida;
 use App\Models\User;
 use App\Services\CompraService;
 use App\Services\ProductoService;
+use App\Services\SalidaService;
 use App\Services\StockService;
 use App\Services\TransferenciaService;
 use App\Support\EmpresaActual;
@@ -201,7 +204,84 @@ class DemoCatalogoSeeder extends Seeder
                 ['producto_id' => $gaseosa->id, 'cantidad' => 12, 'ubicacion_id' => $a011],
                 ['producto_id' => $harina->id, 'cantidad' => 5],
             ], ['transportista' => 'Juan (camioneta)', 'observaciones' => 'Reposición semanal (ejemplo)']);
+
+            // Salidas a clientes: una reserva parcialmente entregada y un remito directo con número de serie
+            $this->salidas($gaseosa, $harina, $taladro, $principal, $a011);
         });
+    }
+
+    protected function salidas(Producto $gaseosa, Producto $harina, Producto $taladro, Deposito $principal, ?int $a011): void
+    {
+        $admin = User::where('email', 'admin@demo.com')->first();
+
+        $almacen = Cliente::create([
+            'razon_social' => 'Almacén Don Pedro S.R.L.',
+            'nombre_fantasia' => 'Almacén Don Pedro',
+            'documento_tipo' => 'CUIT',
+            'documento' => '30-71234567-1',
+            'condicion_iva' => 'responsable_inscripto',
+            'contacto' => 'Pedro',
+            'telefono' => '11 5555-0001',
+            'domicilio' => 'Av. Siempreviva 742',
+            'localidad' => 'Springfield',
+            'provincia' => 'Buenos Aires',
+            'activo' => true,
+        ]);
+
+        $constructora = Cliente::create([
+            'razon_social' => 'Constructora Los Álamos S.A.',
+            'documento_tipo' => 'CUIT',
+            'documento' => '30-70999888-5',
+            'condicion_iva' => 'responsable_inscripto',
+            'email' => 'compras@losalamos.example',
+            'domicilio' => 'Ruta 8 km 50',
+            'localidad' => 'Pilar',
+            'provincia' => 'Buenos Aires',
+            'activo' => true,
+        ]);
+
+        Cliente::create([
+            'razon_social' => 'María Gómez',
+            'documento_tipo' => 'DNI',
+            'documento' => '30111222',
+            'condicion_iva' => 'consumidor_final',
+            'telefono' => '11 6666-0002',
+            'activo' => true,
+        ]);
+
+        $salidas = app(SalidaService::class);
+
+        // El almacén reserva 10 gaseosas y 5 kg de harina del lote vigente; retira en 3 días
+        $reserva = $salidas->reservar($principal->id, [
+            ['producto_id' => $gaseosa->id, 'cantidad' => 10],
+            ['producto_id' => $harina->id, 'cantidad' => 5, 'lote_id' => Lote::where('producto_id', $harina->id)->where('codigo', 'H-2611')->value('id')],
+        ], [
+            'cliente_id' => $almacen->id,
+            'vence_at' => now()->addDays(3),
+            'observaciones' => 'Seña abonada, retira el jueves (ejemplo)',
+        ], $admin);
+
+        // Primera entrega parcial: 4 gaseosas (quedan 6 + 5 kg reservados)
+        $itemGaseosa = $reserva->items()->where('producto_id', $gaseosa->id)->first();
+        $salidas->emitirRemito([
+            'fecha' => today()->toDateString(),
+            'direccion_entrega' => $almacen->direccion_completa,
+            'transportista' => 'Retira el cliente',
+        ], [
+            ['producto_id' => $gaseosa->id, 'cantidad' => 4, 'reserva_item_id' => $itemGaseosa->id, 'ubicacion_id' => $a011],
+        ], $reserva, $admin);
+
+        // Remito directo: un taladro con su número de serie a la constructora
+        $salidas->emitirRemito([
+            'deposito_id' => $principal->id,
+            'cliente_id' => $constructora->id,
+            'fecha' => today()->toDateString(),
+            'direccion_entrega' => $constructora->direccion_completa,
+            'transportista' => 'Expreso Pilar',
+            'comprobante_venta' => 'FC A 0001-00000123',
+        ], [
+            ['producto_id' => $taladro->id, 'cantidad' => 1, 'series' => "TAL-0003"],
+        ], null, $admin);
     }
 
     protected function depositos(): void

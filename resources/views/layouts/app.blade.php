@@ -88,6 +88,23 @@
                         </a>
                     @endif
 
+                    @if ($usuario->tieneRol('admin', 'encargado', 'operador'))
+                        <div class="seccion">Salidas</div>
+                        <a class="nav-link {{ request()->routeIs('salidas.remitos.*') ? 'active' : '' }}" href="{{ route('salidas.remitos.index') }}">
+                            <i class="bi bi-box-arrow-right"></i> Remitos
+                        </a>
+                        @php($reservasActivas = \App\Models\Reserva::activas()->count())
+                        <a class="nav-link {{ request()->routeIs('salidas.reservas.*') ? 'active' : '' }}" href="{{ route('salidas.reservas.index') }}">
+                            <i class="bi bi-bookmark"></i> Reservas
+                            @if ($reservasActivas)
+                                <span class="badge rounded-pill text-bg-secondary ms-auto">{{ $reservasActivas }}</span>
+                            @endif
+                        </a>
+                        <a class="nav-link {{ request()->routeIs('salidas.clientes.*') ? 'active' : '' }}" href="{{ route('salidas.clientes.index') }}">
+                            <i class="bi bi-people"></i> Clientes
+                        </a>
+                    @endif
+
                     @if ($empresaActual->tieneModulo('compras') && $usuario->tieneRol('admin', 'encargado', 'operador'))
                         <div class="seccion">Abastecimiento</div>
                         @if ($usuario->tieneRol('admin', 'encargado'))

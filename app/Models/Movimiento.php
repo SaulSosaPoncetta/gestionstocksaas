@@ -56,6 +56,7 @@ class Movimiento extends Model
         'motivo_id',
         'transferencia_id',
         'recepcion_compra_id',
+        'remito_id',
         'estado',
         'origen',
         'referencia_externa',
@@ -105,6 +106,11 @@ class Movimiento extends Model
         return $this->belongsTo(RecepcionCompra::class);
     }
 
+    public function remito(): BelongsTo
+    {
+        return $this->belongsTo(Remito::class);
+    }
+
     public function deposito(): BelongsTo
     {
         return $this->belongsTo(Deposito::class)->withTrashed();
@@ -147,10 +153,13 @@ class Movimiento extends Model
         return $this->estado === self::ESTADO_CONFIRMADO && $this->tipo !== self::TIPO_ANULACION;
     }
 
-    /** Desde la pantalla de movimientos (los de transferencias y compras se anulan desde su módulo). */
+    /** Desde la pantalla de movimientos (los de transferencias, compras y remitos se anulan desde su módulo). */
     public function puedeAnularseManualmente(): bool
     {
-        return $this->puedeAnularse() && $this->transferencia_id === null && $this->recepcion_compra_id === null;
+        return $this->puedeAnularse()
+            && $this->transferencia_id === null
+            && $this->recepcion_compra_id === null
+            && $this->remito_id === null;
     }
 
     /* ---------- Presentación ---------- */
