@@ -476,6 +476,8 @@ class StockService
                     'cantidad_contada' => $linea['contado'],
                     'saldo' => $saldoDeposito[$clave],
                     'costo_unitario' => round($costo, 4),
+                    // Costo promedio del producto después de este renglón: permite valorizar el stock a cualquier fecha
+                    'costo_promedio' => round($this->costoVigente($producto), 4),
                     'fecha' => $fecha,
                     'series' => $serieIds,
                 ];

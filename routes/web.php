@@ -25,6 +25,7 @@ use App\Http\Controllers\Inventario\StockController;
 use App\Http\Controllers\Inventario\TomaInventarioController;
 use App\Http\Controllers\Inventario\TransferenciaController;
 use App\Http\Controllers\Inventario\UbicacionController;
+use App\Http\Controllers\Inventario\ValorizacionController;
 use App\Http\Controllers\Inventario\VencimientoController;
 use Illuminate\Support\Facades\Route;
 
@@ -177,6 +178,11 @@ Route::middleware('auth')->group(function () {
 
         /* Depósitos y ubicaciones */
         Route::middleware('rol:admin,encargado')->prefix('inventario')->name('inventario.')->group(function () {
+
+            // Valorización del stock (costos: solo admin y encargado)
+            Route::get('/valorizacion', [ValorizacionController::class, 'index'])->name('valorizacion.index');
+            Route::get('/valorizacion/a-fecha', [ValorizacionController::class, 'historica'])->name('valorizacion.historica');
+            Route::get('/valorizacion/salidas', [ValorizacionController::class, 'salidas'])->name('valorizacion.salidas');
 
             Route::get('/depositos', [DepositoController::class, 'index'])->name('depositos.index');
 

@@ -92,6 +92,9 @@
                         </a>
                     @endif
                     @if ($usuario->tieneRol('admin', 'encargado'))
+                        <a class="nav-link {{ request()->routeIs('inventario.valorizacion.*') ? 'active' : '' }}" href="{{ route('inventario.valorizacion.index') }}">
+                            <i class="bi bi-cash-stack"></i> Valorización
+                        </a>
                         <a class="nav-link {{ request()->routeIs('inventario.depositos.*', 'inventario.ubicaciones.*') ? 'active' : '' }}" href="{{ route('inventario.depositos.index') }}">
                             <i class="bi bi-buildings"></i> Depósitos
                         </a>

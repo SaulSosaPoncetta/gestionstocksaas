@@ -29,6 +29,7 @@ class MovimientoItem extends Model
         'cantidad_contada',
         'saldo',
         'costo_unitario',
+        'costo_promedio',
         'fecha',
     ];
 
@@ -40,6 +41,7 @@ class MovimientoItem extends Model
             'cantidad_contada' => 'decimal:4',
             'saldo' => 'decimal:4',
             'costo_unitario' => 'decimal:4',
+            'costo_promedio' => 'decimal:4',
             'fecha' => 'datetime',
         ];
     }
